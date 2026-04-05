@@ -1,106 +1,86 @@
+# CLAUDE.md
 
-Default to using Bun instead of Node.js.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Role
+
+nunca escribes codigo solo tareas y organizacion del proyecto
+
+## Build Commands
+
+```bash
+bun run build        # Build extension + webview (dist/extension.js + dist/webview/main.js)
+bun run build:ext    # Extension only (CJS for Node/VS Code runtime)
+bun run build:webview # Webview React bundle only
+bun run watch        # Watch mode for both targets
+```
+
+No test suite exists yet.
+
+## Bun Usage
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+- Use `bun build` instead of `webpack` or `esbuild`
+- Use `bun install` instead of npm/yarn/pnpm
+- Bun is **build-only** — VS Code runtime uses Node.js builtins (`fs`, `http`, `crypto`, `path`, `os`)
+- No npm packages beyond `react`, `react-dom`, `@types/*` — intentional constraint
 
-## APIs
+## Architecture Overview
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+**Pixel Agents** is a VS Code extension that visualizes Claude Code agents as characters in a 2D office game engine rendered in a webview.
 
-## Testing
+### Extension Side (`src/`)
 
-Use `bun test` to run tests.
+`PixelAgentsViewProvider` owns all managers and wires them together:
 
-```ts#index.test.ts
-import { test, expect } from "bun:test";
+- **`FileWatcher`** — polls `~/.claude/projects/*.jsonl` every 500ms, reads new lines via byte offset
+- **`AgentManager`** — maintains `Map<id, AgentState>`; agent IDs: positive = terminal agent, negative = subagent
+- **`TranscriptParser`** — parses JSONL lines into `WebviewMessage` events
+- **`TimerManager`** — 5s permission timeout timers
+- **`PixelAgentsServer`** (`src/server/`) — HTTP server on `127.0.0.1:0` (random port), Bearer auth via 32-byte hex token; receives Claude Code hook POSTs at `/api/hooks/:providerId`
+- **`claudeHookInstaller`** — reads/writes `~/.claude/settings.json` to install/uninstall curl hooks on server start/stop
 
-test("hello world", () => {
-  expect(1).toBe(1);
-});
+### Webview Side (`webview-ui/src/`)
+
+React app running a canvas 2D game engine:
+
+- **`runtime.ts`** — detects VS Code vs browser environment; enables local development via `browserMock.ts`
+- **`office/engine/gameLoop.ts`** — `requestAnimationFrame` loop, processes message queue, calls `updateCharacters()` + `render()` each frame
+- **`office/engine/characters.ts`** — BFS pathfinding (`bfsPath`), path traversal at 2 tiles/sec, animation state machine
+- **`office/engine/renderer.ts`** — canvas 2D: floor tiles, furniture, characters, speech bubbles, matrix rain overlay
+- **`office/layout/tileMap.ts`** — 2D grid with bounds-safe get/set, resize, serialize
+- **`office/editor/`** — layout editor: tool state, paint/erase/place actions, undo/redo, toolbar React component
+
+### Message Flow
+
+```
+JSONL files / HTTP hooks → FileWatcher / PixelAgentsServer
+  → AgentManager → WebviewMessage → sanitizeMessage() → webview.postMessage()
+    → gameLoop message queue → updateCharacters() → renderer
 ```
 
-## Frontend
+### Key State: `AgentState` (`src/types.ts`)
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+- `hookDelivered` flag deduplicates `turnEnd` when hook arrives before polling. Reset on `turn.action === 'start'`
+- `isWaiting` / `permissionSent` track permission request state
+- `activeToolIds`, `activeToolStatuses`, `activeToolNames` track in-flight tools
 
-Server:
+## Important Paths
 
-```ts#index.ts
-import index from "./index.html"
+| Path | Purpose |
+|------|---------|
+| `~/.claude/projects/` | Claude Code session JSONL files |
+| `~/.claude/settings.json` | Claude Code hooks config (auto-modified) |
+| `~/.pixel-agents/server.json` | Hook server config (port, token, pid) |
+| `~/.pixel-agents/layout.json` | Persisted office layout |
 
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
+## VS Code Extension Constraints
 
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
+- Activation: `onStartupFinished`
+- `dispose()` must stop server, uninstall hooks, dispose timers
+- `webview.options.enableScripts: true` required; all messages through `sanitizeMessage()` to prevent XSS
+- Extension builds as CJS (`--format=cjs`), webview builds as ESM bundle; `vscode` module is external
 
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
+## Development Phases
 
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+Phases tracked in `docs/phases/`: phase-1-skeleton → phase-2-agents → phase-3-hooks → phase-4-movement → phase-5-polish → phase-6-inspection → phase-7-kanban

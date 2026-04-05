@@ -32,7 +32,35 @@ src/
     providers/file/
       claudeHookInstaller.ts  # Reads/writes ~/.claude/settings.json
       hooks/claude-hook.ts    # Generates inline curl hook script
-webview-ui/src/main.tsx  # React webview entry
+webview-ui/src/         # Phase 4: Game engine webview
+  main.tsx              # React entry point
+  App.tsx               # Main React component
+  runtime.ts            # Environment detector (VS Code vs browser)
+  vscodeApi.ts          # VS Code API wrapper (acquireVsCodeApi)
+  browserMock.ts        # Browser mock for local development
+  office/               # Office game engine
+    types.ts            # Position, Character, TileType, OfficeLayout
+    sprites/            # Sprite management and animation definitions
+      index.ts          # Sprite exports and ANIMATIONS constant
+      spriteCache.ts    # Image loading and caching
+      spriteData.ts     # Sprite metadata and URLs
+    layout/             # Office layout and tiles
+      tileMap.ts        # TileMap class (2D grid, get/set, resize)
+      furnitureCatalog.ts # Furniture item definitions
+      layoutSerializer.ts # Layout JSON serialization
+    engine/             # Core game engine
+      gameLoop.ts       # requestAnimationFrame loop, message queue
+      characters.ts     # Character movement, BFS pathfinding, states
+      officeState.ts    # OfficeState interface, character CRUD
+      renderer.ts       # Canvas 2D rendering
+      matrixEffect.ts   # Matrix rain background effect
+    editor/             # Layout editor UI
+      editorState.ts    # Editor state (tool, selection, history)
+      editorActions.ts  # Editor actions (paint, erase, place)
+      EditorToolbar.tsx # Toolbar React component
+    floorTiles.ts       # Floor tile definitions
+    wallTiles.ts        # Wall tile definitions
+    colorize.ts         # Sprite palette colorization utilities
 ```
 
 ## Key Architecture Facts
@@ -69,5 +97,61 @@ This repo implements phases. See `docs/phases/`:
 - phase-1-skeleton — Initial structure
 - phase-2-agents — JSONL polling, AgentManager, FileWatcher
 - phase-3-hooks — HTTP server for Claude Code hooks
-- phase-4-movement, phase-5-polish — (future)
+- phase-4-movement — Game engine, character movement, pathfinding, renderer
+- phase-5-polish — (future)
+
+## Game Engine Architecture (Phase 4)
+
+### Core Types (`office/types.ts`)
+
+| Type | Description |
+|------|-------------|
+| `Position` | `{x, y}` tile coordinates |
+| `Character` | Agent avatar with position, path, state, animation |
+| `CharacterState` | `'idle' \| 'walk' \| 'type' \| 'read' \| 'waiting'` |
+| `TileType` | `'empty' \| 'floor' \| 'wall'` |
+| `OfficeLayout` | Full office: width, height, tiles[][], furniture, seats |
+
+### Game Loop (`office/engine/gameLoop.ts`)
+
+- Uses `requestAnimationFrame` for smooth 60fps rendering
+- Processes a message queue for incoming events (agentAdded, turnEnd, permissionRequest, toolStart, toolEnd)
+- Calls `updateCharacters()` then `render()` each frame
+- Returns a cleanup function to stop the loop
+
+### Character Movement (`office/engine/characters.ts`)
+
+- **BFS pathfinding**: `bfsPath(tileMap, from, to)` returns `Position[]` or `[]` if unreachable
+- Path traversal at `WALK_SPEED = 2` tiles/second
+- Facing direction updated based on movement axis (horizontal takes precedence)
+- Animation state machine: `walk-${facingDir}` or `idle` fallback
+
+### Rendering (`office/engine/renderer.ts`)
+
+- Canvas 2D rendering with zoom/pan transform
+- Renders floor tiles, furniture, characters, speech bubbles
+- Matrix rain effect overlay
+
+### Tile Map (`office/layout/tileMap.ts`)
+
+- 2D grid with `get(x, y)` / `set(x, y, type)` accessors
+- Bounds-safe (returns `'empty'` for out-of-range)
+- `resize()`, `clear()`, `toArray()`, `fromArray()` methods
+
+### VS Code API Abstraction (`runtime.ts`)
+
+| Function | VS Code Mode | Browser Mode |
+|----------|-------------|--------------|
+| `postMessage()` | `vscode.postMessage()` | `console.log()` |
+| `getState()` | `vscode.getState()` | `{}` |
+| `onMessage()` | (from browserMock) | registers handler |
+
+- `runtime.init()` detects environment via `window.acquireVsCodeApi`
+- Enables local browser development without VS Code
+
+### Editor State (`office/editor/`)
+
+- `EditorTool`: `'select' \| 'paint' \| 'erase' \| 'place' \| 'eyedropper' \| 'pick'`
+- `editorState.ts`: Current tool, selection, undo/redo history
+- `editorActions.ts`: Paint tiles, place furniture, erase operations
 ```

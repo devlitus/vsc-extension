@@ -2,12 +2,12 @@
 
 ## Tasks
 
-- [x] 1. Crear src/types.ts
-  1. Definir AgentState interface con todos los campos
-  2. Definir PersistedAgent interface con todos los campos
-  3. Tipos para terminalRef, sets y maps
+- [x] 1. Create src/types.ts
+  1. Define AgentState interface with all fields
+  2. Define PersistedAgent interface with all fields
+  3. Types for terminalRef, sets and maps
 
-- [x] 2. Crear src/constants.ts
+- [x] 2. Create src/constants.ts
   1. POLL_INTERVAL_MS = 500
   2. READ_CHUNK_BYTES = 65536
   3. IDLE_THRESHOLD_MS = 5000
@@ -18,64 +18,64 @@
   8. COMMAND_EXPORT_DEFAULT_LAYOUT
   9. PERMISSION_EXEMPT_TOOLS Set
 
-- [x] 3. Crear src/transcriptParser.ts
-  1. Implementar processTranscriptLine(line, agent, postMessage)
-  2. Parsear JSON, ignorar errores
-  3. Manejar record.type === 'assistant' → toolStart
-  4. Manejar record.type === 'tool_result' → toolEnd
-  5. Manejar record.type === 'system' && subtype === 'turn_duration' → turnEnd
-  6. Manejar record.type === 'system' && subtype === 'progress' → toolProgress
-  7. Implementar formatToolStatus(toolName, input)
+- [x] 3. Create src/transcriptParser.ts
+  1. Implement processTranscriptLine(line, agent, postMessage)
+  2. Parse JSON, ignore errors
+  3. Handle record.type === 'assistant' → toolStart
+  4. Handle record.type === 'tool_result' → toolEnd
+  5. Handle record.type === 'system' && subtype === 'turn_duration' → turnEnd
+  6. Handle record.type === 'system' && subtype === 'progress' → toolProgress
+  7. Implement formatToolStatus(toolName, input)
 
-- [x] 4. Crear src/timerManager.ts
-  1. Implementar clase TimerManager
+- [x] 4. Create src/timerManager.ts
+  1. Implement TimerManager class
   2. startPermissionTimer(agentId, onTimeout, ms)
   3. cancelTimer(agentId)
   4. disposeAll()
 
-- [x] 5. Crear src/fileWatcher.ts
-  1. Definir AgentUpdateCallback type
-  2. Implementar clase FileWatcher
+- [x] 5. Create src/fileWatcher.ts
+  1. Define AgentUpdateCallback type
+  2. Implement FileWatcher class
   3. start(projectDirs, onAgentUpdate)
   4. stop()
-  5. Loop de polling cada POLL_INTERVAL_MS
-  6. Escanear ~/.claude/projects/ para *.jsonl
-  7. Leer desde fileOffset con buffer para líneas parciales
-  8. Adoptar nuevos archivos como agentes externos
-  9. Detectar /clear con </command-name>
-  10. Escuchar onDidOpenTerminal y onDidCloseTerminal
-  11. Asociar terminales con "claude" en el nombre
+  5. Polling loop every POLL_INTERVAL_MS
+  6. Scan ~/.claude/projects/ for *.jsonl files
+  7. Read from fileOffset with buffer for partial lines
+  8. Adopt new files as external agents
+  9. Detect /clear with </command-name>
+  10. Listen to onDidOpenTerminal and onDidCloseTerminal
+  11. Associate terminals with "claude" in their name
 
-- [x] 6. Crear src/agentManager.ts
-  1. Implementar clase AgentManager
+- [x] 6. Create src/agentManager.ts
+  1. Implement AgentManager class
   2. createAgent(sessionId, jsonlFile, projectDir, terminal?)
   3. removeAgent(id)
   4. getAgent(id)
   5. getAllAgents()
-  6. IDs positivos para terminales, negativos para sub-agentes
+  6. Positive IDs for terminals, negative for sub-agents
 
-- [x] 7. Crear src/configPersistence.ts
+- [x] 7. Create src/configPersistence.ts
   1. saveAgents(context, agents)
   2. loadAgents(context)
-  3. Usar context.globalState
+  3. Use context.globalState
 
-- [x] 8. Crear src/layoutPersistence.ts
+- [x] 8. Create src/layoutPersistence.ts
   1. saveLayout(layout)
   2. loadLayout()
-  3. Usar ~/.pixel-agents/layout.json
+  3. Use ~/.pixel-agents/layout.json
 
-- [x] 9. Crear src/assetLoader.ts
-  1. Definir AssetManifest type
+- [x] 9. Create src/assetLoader.ts
+  1. Define AssetManifest type
   2. getAssetUris(webview, extensionUri)
-  3. Cargar desde dist/assets/ y directorios externos
+  3. Load from dist/assets/ and external directories
 
-- [x] 10. Actualizar PixelAgentsViewProvider.ts
-  1. Instanciar FileWatcher, AgentManager, TimerManager
-  2. Pasar postMessage al FileWatcher
-  3. En dispose(): detener FileWatcher, limpiar timers
-  4. Reenviar mensajes al webview según protocolo
+- [x] 10. Update PixelAgentsViewProvider.ts
+  1. Instantiate FileWatcher, AgentManager, TimerManager
+  2. Pass postMessage to FileWatcher
+  3. In dispose(): stop FileWatcher, clear timers
+  4. Forward messages to webview according to protocol
 
-- [x] 11. Definir tipos de mensajes webview
+- [x] 11. Define webview message types
   1. agentAdded
   2. agentRemoved
   3. toolStart
@@ -86,12 +86,12 @@
   8. layoutLoaded
   9. assetsLoaded
 
-- [x] 12. Verificar compilación
-  1. bun run build sin errores
-  2. TypeScript sin errores de tipos
+- [x] 12. Verify build
+  1. bun run build without errors
+  2. TypeScript without type errors
 
-- [x] 13. Verificar runtime
-  1. Abrir terminal con Claude Code
-  2. Webview recibe agentAdded
-  3. Ejecutar herramienta → toolStart
-  4. Completar turno → turnEnd
+- [x] 13. Verify runtime
+  1. Open terminal with Claude Code
+  2. Webview receives agentAdded
+  3. Run a tool → toolStart
+  4. Complete turn → turnEnd
