@@ -39,7 +39,7 @@ export type WebviewMessage =
   | { type: 'toolStart'; agentId: number; toolName: string; status: string }
   | { type: 'toolEnd'; agentId: number }
   | { type: 'toolProgress'; agentId: number; status: string }
-  | { type: 'turnEnd'; agentId: number }
+  | { type: 'turnEnd'; agentId: number; source?: 'hook' | 'polling' }
   | { type: 'permissionRequest'; agentId: number }
   | { type: 'layoutLoaded'; layout: unknown }
   | { type: 'assetsLoaded'; manifest: unknown };
