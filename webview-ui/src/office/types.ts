@@ -17,7 +17,21 @@ export interface Character {
   animFrame: number;
   animTimer: number;
   toolStatus?: string;
-  bubbleType?: 'permission' | 'waiting';
+  bubbleType?: 'permission' | 'waiting' | 'zzz';
+  contextUsed?: number;
+  contextMax?: number;
+  isRateLimited?: boolean;
+}
+
+export interface SubagentCharacter {
+  id: string; // composite key: "<agentId>:<toolId>"
+  agentId: number;
+  toolId: string;
+  position: Position;
+  state: 'animating' | 'idle';
+  linkedToParentId: number;
+  animFrame: number;
+  animTimer: number;
 }
 
 export interface Seat {
