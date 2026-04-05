@@ -13,6 +13,18 @@
           "name": "MiniMax-M2.7"
         }
       }
+    },
+    "github Copilot": {
+      "npm": "@ai-sdk/github-copilot",
+      "name": "github Copilot",
+      "options": {
+        "baseURL": "https://api.github.com"
+      },
+      "models": {
+        "github Copilot": {
+          "name": "github Copilot"
+        }
+      }
     }
   }
 }

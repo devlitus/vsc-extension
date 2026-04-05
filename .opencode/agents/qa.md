@@ -1,6 +1,7 @@
 ---
 description: Reviews code quality, writes tests, and verifies implementations against requirements
 mode: subagent
+model: GPT-5.3-codex
 temperature: 0.2
 steps: 25
 tools:
