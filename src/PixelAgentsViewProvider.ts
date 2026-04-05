@@ -234,7 +234,6 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             });
           }
         } else if (action === 'redirect') {
-          // If newCwd in payload, use it; otherwise show folder picker
           const payload = msg.payload as { newCwd?: string } | undefined;
           let newCwd = payload?.newCwd as string | undefined;
           if (!newCwd) {
@@ -248,14 +247,23 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             }
             newCwd = selected[0].fsPath;
           }
+
+          // Interrupt the current agent first
+          this.agentManager.interruptAgent(agentId);
+
           // Open new terminal in newCwd
           const terminal = vscode.window.createTerminal({
             name: `Claude (Redirected)`,
             cwd: newCwd,
           });
+
+          // Start claude in the new terminal
           terminal.sendText('claude', true);
-          // Note: Full redirect implementation would reassign character to new terminal
-          // For now, just acknowledge
+          terminal.show();
+
+          // Reassign the agent to the new terminal
+          this.agentManager.reassignTerminal(agentId, terminal, newCwd);
+
           if (this.webviewView) {
             this.webviewView.webview.postMessage({
               type: 'agentAction',

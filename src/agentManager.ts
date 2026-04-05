@@ -152,6 +152,25 @@ export class AgentManager {
     return true;
   }
 
+  reassignTerminal(agentId: number, newTerminal: vscode.Terminal, newCwd: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return false;
+    }
+    // Reassign the terminal reference to the new terminal
+    agent.terminalRef = newTerminal;
+    // Update the working directory to the new cwd
+    agent.projectDir = newCwd;
+    // Reset interrupted flag since we have a fresh session
+    agent.isInterrupted = false;
+    // Clear turn history since it's a new session
+    agent.turnHistory = [];
+    agent.toolsThisTurn = [];
+    agent.currentTurnStartTime = undefined;
+    // Note: sessionId and jsonlFile will be updated by the new terminal's session
+    return true;
+  }
+
   sendChatMessage(agentId: number, text: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || !agent.terminalRef) {
