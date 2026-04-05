@@ -59,6 +59,7 @@ export class AgentManager {
       turnHistory: [],
       currentTurnStartTime: undefined,
       isInterrupted: false,
+      currentTurnAssistantContent: '',
     };
 
     if (terminal) {

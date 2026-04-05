@@ -1,7 +1,5 @@
 {
-  "$schema": "https://opencode.ai/config.json",
-  "default_agent": "orchestrator",
-  "provider": {
+  "providers": {
     "minimax": {
       "type": "anthropic",
       "api_endpoint": "https://api.minimax.io/anthropic"

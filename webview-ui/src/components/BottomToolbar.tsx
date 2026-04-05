@@ -9,6 +9,8 @@ export interface BottomToolbarProps {
   onZoomOut: () => void;
   isEditorOpen: boolean;
   onToggleEditor: () => void;
+  isKanbanOpen: boolean;
+  onToggleKanban: () => void;
   onOpenSettings: () => void;
   onOpenChangelog: () => void;
   lastSeenVersion: string | null;
@@ -20,6 +22,8 @@ export function BottomToolbar({
   onZoomOut,
   isEditorOpen,
   onToggleEditor,
+  isKanbanOpen,
+  onToggleKanban,
   onOpenSettings,
   onOpenChangelog,
   lastSeenVersion,
@@ -164,6 +168,18 @@ export function BottomToolbar({
           title={isEditorOpen ? 'Close layout editor' : 'Open layout editor'}
         >
           {isEditorOpen ? '✓ Layout' : 'Layout'}
+        </button>
+
+        <button
+          style={{
+            ...buttonBaseStyle,
+            background: isKanbanOpen ? '#4a4a4a' : '#3a3a3a',
+            color: '#fff',
+          }}
+          onClick={onToggleKanban}
+          title={isKanbanOpen ? 'Close Kanban board' : 'Open Kanban board'}
+        >
+          {isKanbanOpen ? '✓ Board' : 'Board'}
         </button>
       </div>
 

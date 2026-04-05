@@ -56,6 +56,18 @@ export function render(ctx: CanvasRenderingContext2D, state: OfficeState): void 
     }
   }
 
+  // Render task assignment speech bubbles (bubbleText)
+  for (const character of state.characters.values()) {
+    if (character.bubbleText) {
+      const x = character.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+      const y = character.position.y * SPRITE_TILE_SIZE - 10;
+      ctx.font = '10px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(character.bubbleText, x, y);
+    }
+  }
+
   // Render subagent links
   for (const subagent of state.subagents.values()) {
     renderSubagentLink(ctx, subagent, state);

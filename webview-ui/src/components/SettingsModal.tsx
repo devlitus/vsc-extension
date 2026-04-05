@@ -11,6 +11,9 @@ export interface SettingsModalProps {
   debugViewEnabled: boolean;
   externalAssetDirs: string[];
   serverPort: number | null;
+  autoAssignEnabled: boolean;
+  githubRepo: string;
+  hasGithubToken: boolean;
   onToggleSound: (v: boolean) => void;
   onToggleLabels: (v: boolean) => void;
   onToggleWatchAll: (v: boolean) => void;
@@ -18,6 +21,9 @@ export interface SettingsModalProps {
   onToggleDebugView: (v: boolean) => void;
   onAddAssetDir: () => void;
   onRemoveAssetDir: (dir: string) => void;
+  onToggleAutoAssign: (v: boolean) => void;
+  onGithubRepoChange: (v: string) => void;
+  onGithubTokenChange: (v: string) => void;
 }
 
 interface ToggleProps {
@@ -91,6 +97,48 @@ function Toggle({ checked, onChange, label, description }: ToggleProps) {
   );
 }
 
+interface InputFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: 'text' | 'password';
+}
+
+function InputField({ label, value, onChange, placeholder, type = 'text' }: InputFieldProps) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          fontSize: 12,
+          color: '#888',
+          fontFamily: 'sans-serif',
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{
+          width: '100%',
+          padding: '8px 10px',
+          background: '#2a2a2a',
+          border: '1px solid #3a3a3a',
+          borderRadius: 4,
+          color: '#ccc',
+          fontSize: 13,
+          fontFamily: 'sans-serif',
+          boxSizing: 'border-box',
+        }}
+      />
+    </div>
+  );
+}
+
 export function SettingsModal({
   isOpen,
   onClose,
@@ -101,6 +149,9 @@ export function SettingsModal({
   debugViewEnabled,
   externalAssetDirs,
   serverPort,
+  autoAssignEnabled,
+  githubRepo,
+  hasGithubToken,
   onToggleSound,
   onToggleLabels,
   onToggleWatchAll,
@@ -108,6 +159,9 @@ export function SettingsModal({
   onToggleDebugView,
   onAddAssetDir,
   onRemoveAssetDir,
+  onToggleAutoAssign,
+  onGithubRepoChange,
+  onGithubTokenChange,
 }: SettingsModalProps) {
   useEffect(() => {
     if (!isOpen) return;
@@ -152,6 +206,31 @@ export function SettingsModal({
 
   const handleToggleDebugView = (value: boolean) => {
     onToggleDebugView(value);
+  };
+
+  const handleToggleAutoAssign = (value: boolean) => {
+    onToggleAutoAssign(value);
+    postMessage({ type: 'setSetting', key: 'autoAssignEnabled', value });
+  };
+
+  const handleGithubRepoChange = (value: string) => {
+    // Security: Validate format: owner/repo
+    const pattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]*$/;
+    if (value && !pattern.test(value)) {
+      // Don't update invalid values
+      return;
+    }
+    onGithubRepoChange(value);
+    postMessage({ type: 'setSetting', key: 'githubRepo', value });
+  };
+
+  const handleGithubTokenChange = (value: string) => {
+    onGithubTokenChange(value);
+    postMessage({ type: 'setGithubToken', value });
+  };
+
+  const handleGithubSync = () => {
+    postMessage({ type: 'githubSync' });
   };
 
   const handleExportDefaultLayout = () => {
@@ -340,6 +419,85 @@ export function SettingsModal({
               onChange={handleToggleHooks}
               label="Hooks enabled"
               description="Install Claude Code hooks for enhanced tracking"
+            />
+          </div>
+
+          {/* Task Source section */}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#888',
+                fontFamily: 'sans-serif',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                marginBottom: 8,
+              }}
+            >
+              Task Source
+            </div>
+            <InputField
+              label="GitHub repo (owner/repo)"
+              value={githubRepo}
+              onChange={handleGithubRepoChange}
+              placeholder="e.g., owner/repository"
+            />
+            {hasGithubToken ? (
+              <div style={{ padding: '8px 0', color: '#6b8', fontSize: 13 }}>GitHub token: Token configured ✓</div>
+            ) : (
+              <InputField
+                label="GitHub token"
+                value=""
+                onChange={handleGithubTokenChange}
+                placeholder="ghp_..."
+                type="password"
+              />
+            )}
+            <button
+              onClick={handleGithubSync}
+              style={{
+                padding: '8px 12px',
+                background: '#2a4a2a',
+                border: '1px solid #3a6a3a',
+                borderRadius: 4,
+                cursor: 'pointer',
+                color: '#8f8',
+                fontSize: 13,
+                fontFamily: 'sans-serif',
+                width: '100%',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#3a5a3a';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#2a4a2a';
+              }}
+            >
+              Sync
+            </button>
+          </div>
+
+          {/* Task Coordination section */}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#888',
+                fontFamily: 'sans-serif',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                marginBottom: 8,
+              }}
+            >
+              Task Coordination
+            </div>
+            <Toggle
+              checked={autoAssignEnabled}
+              onChange={handleToggleAutoAssign}
+              label="Auto-assign tasks"
+              description="Automatically assign tasks to agents"
             />
           </div>
 

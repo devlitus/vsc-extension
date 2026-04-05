@@ -266,11 +266,23 @@ export function processTranscriptLine(
         break;
       }
 
+      case 'message': {
+        const role = typeof record.role === 'string' ? record.role : '';
+        if (role === 'assistant') {
+          const content = typeof record.content === 'string' ? record.content : '';
+          if (content) {
+            agentState.currentTurnAssistantContent = content;
+          }
+        }
+        break;
+      }
+
       case 'turn': {
         if (record.action === 'start') {
           agentState.hookDelivered = false;
           agentState.toolsThisTurn = [];
           agentState.currentTurnStartTime = Date.now();
+          agentState.currentTurnAssistantContent = '';
         } else if (record.action === 'end') {
           finalizeTurn(agentState);
           if (!agentState.hookDelivered) {

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentManager } from './agentManager';
@@ -6,6 +7,8 @@ import { TimerManager } from './timerManager';
 import { FileWatcher } from './fileWatcher';
 import { getAssetUris, getExternalAssetUris } from './assetLoader';
 import { loadLayout, saveLayout } from './layoutPersistence';
+import { loadBoard, saveBoard } from './kanbanPersistence';
+import { IDLE_TIMEOUT_MS, TASK_COMPLETION_KEYWORDS, KanbanTask } from './kanbanTypes';
 import { WebviewMessage, AssetManifest } from './types';
 import { PixelAgentsServer } from './server/server';
 import { installHooks, uninstallHooks } from './server/providers/file/claudeHookInstaller';
@@ -20,9 +23,22 @@ const GLOBAL_STATE_KEYS = {
   hooksEnabled: 'hooksEnabled',
   externalAssetDirs: 'externalAssetDirs',
   lastSeenVersion: 'lastSeenVersion',
+  autoAssignEnabled: 'autoAssignEnabled',
+  githubRepo: 'githubRepo',
 } as const;
 
 const HTML_SANITIZE_PATTERN = /[<>&"']/g;
+const GITHUB_REPO_REGEX = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]*$/;
+
+// Security: Validate GitHub repository format (owner/repo)
+function isValidGithubRepo(repo: string): boolean {
+  if (typeof repo !== 'string' || repo.length === 0) return false;
+  const valid = GITHUB_REPO_REGEX.test(repo);
+  if (!valid) {
+    console.error('[Security] Invalid GitHub repo format:', repo);
+  }
+  return valid;
+}
 
 function sanitizeString(str: unknown): string {
   if (typeof str !== 'string') {
@@ -90,6 +106,16 @@ function sanitizeMessage(msg: WebviewMessage): WebviewMessage {
       if (!msg.manifest || typeof msg.manifest !== 'object') return { type: 'assetsLoaded', manifest: null };
       return { type: 'assetsLoaded', manifest: msg.manifest };
     }
+    case 'kanbanLoaded': {
+      // Security: Validate board structure before sending to webview
+      if (!msg.board || typeof msg.board !== 'object') return { type: 'kanbanLoaded', board: { columns: [], tasks: [] } };
+      return { type: 'kanbanLoaded', board: msg.board };
+    }
+    case 'kanbanUpdated': {
+      // Security: Validate board structure before sending to webview
+      if (!msg.board || typeof msg.board !== 'object') return { type: 'kanbanUpdated', board: { columns: [], tasks: [] } };
+      return { type: 'kanbanUpdated', board: msg.board };
+    }
     default:
       return msg;
   }
@@ -104,7 +130,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private timerManager: TimerManager;
   private fileWatcher: FileWatcher;
   private server: PixelAgentsServer;
+  private idleAgents = new Set<number>();
   private openInspectionAgentId: number | null = null;
+  private lastGithubSyncTime = 0;
+  private readonly githubSyncCooldownMs = 60000; // 60 seconds
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.agentManager = new AgentManager();
@@ -173,6 +202,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     function isOpenInspectionPanelMessage(msg: Record<string, unknown>): msg is { type: 'openInspectionPanel'; agentId: unknown } {
       return msg.type === 'openInspectionPanel' && typeof msg.agentId === 'number';
     }
+    function isKanbanUpdate(msg: Record<string, unknown>): msg is { type: 'kanbanUpdate'; board: import('./kanbanTypes').KanbanBoard } {
+      return msg.type === 'kanbanUpdate' && typeof msg.board === 'object';
+    }
 
     switch (msg.type) {
       case 'addAssetDirectory': {
@@ -205,7 +237,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'settingsLoaded': {
-        this.sendSettingsToWebview();
+        await this.sendSettingsToWebview();
         break;
       }
       case 'openInspectionPanel': {
@@ -333,6 +365,125 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.agentManager.sendChatMessage(agentId, text);
         break;
       }
+      case 'kanbanUpdate': {
+        if (!isKanbanUpdate(msg)) break;
+        const board = msg.board as import('./kanbanTypes').KanbanBoard;
+        saveBoard(board);
+        // Broadcast to all webviews
+        if (this.webviewView) {
+          this.webviewView.webview.postMessage({ type: 'kanbanUpdated', board });
+        }
+        break;
+      }
+      case 'kanbanLoaded': {
+        const board = loadBoard();
+        if (this.webviewView) {
+          this.webviewView.webview.postMessage({ type: 'kanbanLoaded', board });
+        }
+        break;
+      }
+      case 'setGithubToken': {
+        if (typeof msg.value === 'string') {
+          if (msg.value) {
+            await this.context.secrets.store('pixel-agents.githubToken', msg.value);
+          } else {
+            await this.context.secrets.delete('pixel-agents.githubToken');
+          }
+        }
+        break;
+      }
+      case 'githubSync': {
+        const githubRepo = this.context.globalState.get<string>(GLOBAL_STATE_KEYS.githubRepo, '');
+        const githubToken = await this.context.secrets.get('pixel-agents.githubToken') ?? '';
+
+        // Security: Validate GitHub repo format
+        if (!githubRepo || !isValidGithubRepo(githubRepo)) {
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'error', message: 'Invalid GitHub repo format. Use owner/repo' });
+          }
+          break;
+        }
+
+        // Security: Rate limiting - prevent too frequent syncs
+        const now = Date.now();
+        if (now - this.lastGithubSyncTime < this.githubSyncCooldownMs) {
+          const remainingSeconds = Math.ceil((this.githubSyncCooldownMs - (now - this.lastGithubSyncTime)) / 1000);
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'error', message: `Please wait ${remainingSeconds}s before syncing again` });
+          }
+          break;
+        }
+
+        try {
+          const board = loadBoard();
+          const headers: Record<string, string> = {
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+          };
+          if (githubToken) {
+            headers['Authorization'] = `Bearer ${githubToken}`;
+          }
+          const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, { headers });
+          if (!response.ok) {
+            // Security: Don't expose internal error details
+            if (response.status === 401 || response.status === 403) {
+              throw new Error('Authentication failed. Please check your GitHub token.');
+            } else if (response.status === 404) {
+              throw new Error('Repository not found. Please check the repo format.');
+            } else {
+              throw new Error('Failed to fetch issues from GitHub.');
+            }
+          }
+          // Security: Validate content-type
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('Invalid response from GitHub API.');
+          }
+          const issues = await response.json() as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; html_url: string }>;
+          if (!Array.isArray(issues)) {
+            throw new Error('Invalid response from GitHub API.');
+          }
+
+          // Security: Sanitize imported task descriptions to prevent XSS
+          const { sanitizeMarkdown } = await import('./kanbanPersistence');
+
+          for (const issue of issues) {
+            // Skip if already imported
+            if (board.tasks.some(t => t.sourceUrl === issue.html_url)) continue;
+            const priority = issue.labels?.some(l => l.name === 'priority:high')
+              ? 'high' as const
+              : issue.labels?.some(l => l.name === 'priority:medium')
+              ? 'medium' as const
+              : 'low' as const;
+            const task: KanbanTask = {
+              id: `gh-${issue.number}-${Date.now()}`,
+              title: sanitizeString(issue.title),
+              description: sanitizeMarkdown(issue.body || ''),
+              priority,
+              status: 'backlog',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              sourceUrl: issue.html_url,
+              sourceProvider: 'github',
+            };
+            board.tasks.push(task);
+          }
+          saveBoard(board);
+          this.lastGithubSyncTime = Date.now();
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({ type: 'kanbanUpdated', board });
+            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'success', message: `Imported ${issues.length} issues` });
+          }
+        } catch (err) {
+          console.error('[Error] GitHub sync failed:', err);
+          if (this.webviewView) {
+            // Security: Don't expose internal error details to client
+            const errorMessage = err instanceof Error ? err.message : 'Failed to sync with GitHub.';
+            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'error', message: errorMessage });
+          }
+        }
+        break;
+      }
     }
   }
 
@@ -350,16 +501,21 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private sendSettingsToWebview(): void {
+  private async sendSettingsToWebview(): Promise<void> {
     if (!this.webviewView) {
       return;
     }
+
+    const hasGithubToken = !!(await this.context.secrets.get('pixel-agents.githubToken'));
 
     const settings = {
       soundEnabled: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.soundEnabled, true),
       alwaysShowLabels: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.alwaysShowLabels, false),
       watchAllSessions: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.watchAllSessions, false),
       hooksEnabled: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.hooksEnabled, true),
+      autoAssignEnabled: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.autoAssignEnabled, false),
+      githubRepo: this.context.globalState.get<string>(GLOBAL_STATE_KEYS.githubRepo, ''),
+      hasGithubToken,
     };
 
     this.webviewView.webview.postMessage({
@@ -400,8 +556,45 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private onAgentUpdate(message: WebviewMessage): void {
+    const msgAgentId = 'agentId' in message ? (message as { agentId: number }).agentId : null;
+
+    // Handle turnEnd - start idle timer (do NOT cancel idle timer here)
+    if (message.type === 'turnEnd' && msgAgentId !== null) {
+      const agentId = msgAgentId;
+      this.timerManager.startIdleTimer(agentId, () => {
+        if (this.webviewView) {
+          this.webviewView.webview.postMessage({ type: 'agentIdle', agentId });
+        }
+      }, IDLE_TIMEOUT_MS);
+    }
+
+    // For non-turnEnd messages with an agentId: cancel permission timer AND cancel idle timer
+    if (msgAgentId !== null && message.type !== 'turnEnd') {
+      this.timerManager.cancelPermissionTimer(msgAgentId);
+      this.timerManager.cancelIdleTimer(msgAgentId);
+    }
+
     if (!this.webviewView) {
       return;
+    }
+
+    // Task completion detection - check for assistant records with completion keywords
+    if (message.type === 'turnEnd') {
+      const agentId = (message as { agentId: number }).agentId;
+      const board = loadBoard();
+      const assignedTask = board.tasks.find(t => t.assignedAgentId === agentId && t.status !== 'done');
+      if (assignedTask) {
+        // Check if the assistant's final message in this turn contains a completion keyword
+        const agent = this.agentManager.getAgent(agentId);
+        const assistantContent = agent?.currentTurnAssistantContent ?? '';
+        const endsWithCompletionKeyword = TASK_COMPLETION_KEYWORDS.some(keyword => {
+          const pattern = new RegExp(`\\b${keyword}\\b[.!?,]?\\s*$`, 'i');
+          return pattern.test(assistantContent);
+        });
+        if (endsWithCompletionKeyword) {
+          this.webviewView?.webview.postMessage({ type: 'taskMaybeComplete', agentId, taskId: assignedTask.id });
+        }
+      }
     }
 
     const sanitized = sanitizeMessage(message);
@@ -457,9 +650,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       manifest,
     };
     this.webviewView.webview.postMessage(msg);
+
+    const board = loadBoard();
+    this.webviewView.webview.postMessage({ type: 'kanbanLoaded', board });
   }
 
   private getHtmlForWebview(): string {
+    const nonce = crypto.randomBytes(16).toString('base64');
     const scriptUri = this.webviewView!.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'main.js')
     );
@@ -469,6 +666,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.webviewView!.webview.cspSource} https: data:; style-src ${this.webviewView!.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <title>Pixel Agents</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -478,7 +676,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="root"></div>
-  <script src="${scriptUri}"></script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }

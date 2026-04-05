@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { KanbanBoard } from './kanbanTypes';
 
 export interface TurnSummary {
   startedAt: number;
@@ -37,6 +38,7 @@ export interface AgentState {
   turnHistory: TurnSummary[];
   currentTurnStartTime?: number;
   isInterrupted?: boolean;
+  currentTurnAssistantContent: string;
 }
 
 export interface PersistedAgent {
@@ -69,7 +71,13 @@ export type WebviewMessage =
   | { type: 'inspectionData'; agentId: number; model?: string; cwd: string; branch?: string | null; systemPrompt?: string; contextUsed: number; contextMax: number; rateLimit: boolean; currentTurnDuration: number; toolsThisTurn: Array<{ name: string; count: number }>; turnHistory: TurnSummary[] }
   | { type: 'agentAction'; agentId: number; action: 'interrupt' | 'redirect'; payload?: { newCwd?: string } }
   | { type: 'agentChatMessage'; agentId: number; text: string }
-  | { type: 'agentDisconnected'; agentId: number };
+  | { type: 'agentDisconnected'; agentId: number }
+  | { type: 'kanbanLoaded'; board: KanbanBoard }
+  | { type: 'kanbanUpdated'; board: KanbanBoard }
+  | { type: 'kanbanTaskAssigned'; taskId: string; agentId: number }
+  | { type: 'agentIdle'; agentId: number }
+  | { type: 'taskMaybeComplete'; agentId: number; taskId: string }
+  | { type: 'githubSync'; result: 'success' | 'error'; message?: string };
 
 export type AgentUpdateCallback = (message: WebviewMessage) => void;
 
@@ -86,4 +94,9 @@ export interface SettingsData {
   alwaysShowLabels: boolean;
   watchAllSessions: boolean;
   hooksEnabled: boolean;
+  autoAssignEnabled: boolean;
+  githubRepo: string;
+  hasGithubToken: boolean;
 }
+
+export type { KanbanBoard } from './kanbanTypes';
