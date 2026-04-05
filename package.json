@@ -1,19 +1,45 @@
 {
-  "name": "vsc-extension",
-  "module": "index.ts",
-  "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@devlitusp/opencode-agent": "^0.0.6",
-    "@types/bun": "latest"
+  "name": "pixel-agents",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "pixel-agents.showPanel",
+        "title": "Show Pixel Agents Panel"
+      },
+      {
+        "command": "pixel-agents.exportDefaultLayout",
+        "title": "Export Default Layout"
+      }
+    ],
+    "views": {
+      "activitybar": [
+        {
+          "id": "pixel-agents",
+          "name": "Pixel Agents"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.105.0",
+    "typescript": "^5.0.0"
   },
   "scripts": {
-    "prepare": "opencode-agent inject"
+    "build:ext": "bun build src/extension.ts --target=node --format=cjs --outfile=dist/extension.js --external vscode",
+    "build:webview": "bun build webview-ui/src/main.tsx --outfile=dist/webview/main.js --minify",
+    "build": "bun run build:ext && bun run build:webview",
+    "watch": "bun run build:ext --watch & bun run build:webview --watch"
   },
-  "trustedDependencies": [
-    "@devlitusp/opencode-agent"
-  ]
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
 }
