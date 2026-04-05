@@ -21,6 +21,8 @@ export interface AgentState {
   lastDataAt: number;
   linesProcessed: number;
   seenUnknownRecordTypes: Set<string>;
+  contextUsed?: number;
+  contextMax?: number;
 }
 
 export interface PersistedAgent {
@@ -42,7 +44,13 @@ export type WebviewMessage =
   | { type: 'turnEnd'; agentId: number; source?: 'hook' | 'polling' }
   | { type: 'permissionRequest'; agentId: number }
   | { type: 'layoutLoaded'; layout: unknown }
-  | { type: 'assetsLoaded'; manifest: unknown };
+  | { type: 'assetsLoaded'; manifest: unknown }
+  | { type: 'contextUpdate'; agentId: number; contextUsed: number; contextMax: number }
+  | { type: 'rateLimitEnter'; agentId: number }
+  | { type: 'rateLimitExit'; agentId: number }
+  | { type: 'externalAssetsLoaded'; assets: unknown }
+  | { type: 'versionUpgraded'; oldVersion: string; newVersion: string }
+  | { type: 'settingsLoaded'; settings: SettingsData };
 
 export type AgentUpdateCallback = (message: WebviewMessage) => void;
 
@@ -52,4 +60,11 @@ export interface AssetManifest {
     name: string;
     uris: Record<string, string>;
   }>;
+}
+
+export interface SettingsData {
+  soundEnabled: boolean;
+  alwaysShowLabels: boolean;
+  watchAllSessions: boolean;
+  hooksEnabled: boolean;
 }

@@ -1,4 +1,4 @@
-import { Character, Seat, FurnitureInstance } from '../types';
+import { Character, Seat, FurnitureInstance, SubagentCharacter } from '../types';
 import type { OfficeState } from './officeState';
 import { SPRITE_TILE_SIZE, get } from '../sprites';
 import { getWallTileRect, computeNeighborMask } from '../wallTiles';
@@ -54,6 +54,16 @@ export function render(ctx: CanvasRenderingContext2D, state: OfficeState): void 
     if (character.bubbleType) {
       renderBubble(ctx, character);
     }
+  }
+
+  // Render subagent links
+  for (const subagent of state.subagents.values()) {
+    renderSubagentLink(ctx, subagent, state);
+  }
+
+  // Render subagents
+  for (const subagent of state.subagents.values()) {
+    renderSubagent(ctx, subagent);
   }
   
   // Reset transform
@@ -111,6 +121,48 @@ function renderCharacter(ctx: CanvasRenderingContext2D, character: Character): v
   ctx.beginPath();
   ctx.arc(eyeX, eyeY, 2, 0, Math.PI * 2);
   ctx.fill();
+  
+  // Render context bar if contextMax is defined
+  if (character.contextMax !== undefined && character.contextMax > 0) {
+    const contextUsed = character.contextUsed ?? 0;
+    const ratio = Math.min(contextUsed / character.contextMax, 1);
+    
+    const barWidth = SPRITE_TILE_SIZE;
+    const barHeight = 3;
+    const barX = x;
+    const barY = y + SPRITE_TILE_SIZE + 2;
+    
+    // Background
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    // Fill based on ratio
+    let barColor = '#44cc44'; // green
+    if (ratio > 0.85) {
+      barColor = '#cc4444'; // red
+    } else if (ratio > 0.60) {
+      barColor = '#cccc44'; // yellow
+    }
+    
+    ctx.fillStyle = barColor;
+    ctx.fillRect(barX, barY, barWidth * ratio, barHeight);
+  }
+  
+  // Render energy bar if rate limited
+  if (character.isRateLimited) {
+    const barWidth = SPRITE_TILE_SIZE;
+    const barHeight = 3;
+    const barX = x;
+    const barY = y + SPRITE_TILE_SIZE + 6;
+    
+    // Background
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    // Red fill for rate limited
+    ctx.fillStyle = '#cc4444';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+  }
 }
 
 function renderBubble(ctx: CanvasRenderingContext2D, character: Character): void {
@@ -118,6 +170,14 @@ function renderBubble(ctx: CanvasRenderingContext2D, character: Character): void
   
   const x = character.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
   const y = character.position.y * SPRITE_TILE_SIZE - SPRITE_TILE_SIZE;
+  
+  if (character.bubbleType === 'zzz') {
+    // ZZZ bubble for rate limited
+    ctx.fillStyle = '#aaccff';
+    ctx.font = '10px monospace';
+    ctx.fillText('zzZ', x - 6, y);
+    return;
+  }
   
   ctx.fillStyle = character.bubbleType === 'permission' ? '#ffcc00' : '#ffffff';
   ctx.beginPath();
@@ -130,4 +190,41 @@ function renderBubble(ctx: CanvasRenderingContext2D, character: Character): void
   ctx.lineTo(x + 4, y + SPRITE_TILE_SIZE / 3);
   ctx.lineTo(x, y + SPRITE_TILE_SIZE / 3 + 6);
   ctx.fill();
+}
+
+function renderSubagent(ctx: CanvasRenderingContext2D, subagent: SubagentCharacter): void {
+  const x = subagent.position.x * SPRITE_TILE_SIZE;
+  const y = subagent.position.y * SPRITE_TILE_SIZE;
+  const scale = 0.75;
+  const scaledSize = SPRITE_TILE_SIZE * scale;
+  const offset = (SPRITE_TILE_SIZE - scaledSize) / 2;
+  
+  // Render at 0.75x scale
+  ctx.fillStyle = '#88aacc';
+  ctx.fillRect(x + offset, y + offset, scaledSize, scaledSize);
+  
+  // Subagent indicator
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(x + SPRITE_TILE_SIZE / 2, y + SPRITE_TILE_SIZE / 3, 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function renderSubagentLink(ctx: CanvasRenderingContext2D, subagent: SubagentCharacter, state: OfficeState): void {
+  const parent = state.characters.get(subagent.linkedToParentId);
+  if (!parent) return;
+  
+  const subX = subagent.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  const subY = subagent.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  const parentX = parent.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  const parentY = parent.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  
+  ctx.strokeStyle = '#666666';
+  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(parentX, parentY);
+  ctx.lineTo(subX, subY);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }

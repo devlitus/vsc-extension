@@ -2,12 +2,23 @@ import * as vscode from 'vscode';
 import { AgentManager } from './agentManager';
 import { TimerManager } from './timerManager';
 import { FileWatcher } from './fileWatcher';
-import { getAssetUris } from './assetLoader';
+import { getAssetUris, getExternalAssetUris } from './assetLoader';
 import { loadLayout, saveLayout } from './layoutPersistence';
 import { WebviewMessage, AssetManifest } from './types';
 import { PixelAgentsServer } from './server/server';
 import { installHooks, uninstallHooks } from './server/providers/file/claudeHookInstaller';
 import { handleHookEvent } from './server/hookEventHandler';
+
+const EXTENSION_VERSION = '0.0.1';
+
+const GLOBAL_STATE_KEYS = {
+  soundEnabled: 'soundEnabled',
+  alwaysShowLabels: 'alwaysShowLabels',
+  watchAllSessions: 'watchAllSessions',
+  hooksEnabled: 'hooksEnabled',
+  externalAssetDirs: 'externalAssetDirs',
+  lastSeenVersion: 'lastSeenVersion',
+} as const;
 
 const HTML_SANITIZE_PATTERN = /[<>&"']/g;
 
@@ -110,22 +121,145 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.getHtmlForWebview();
 
+    // Handle messages from webview
+    webviewView.webview.onDidReceiveMessage((message: unknown) => {
+      this.handleWebviewMessage(message);
+    });
+
     this.fileWatcher.start();
 
+    // Check for version upgrade
+    this.checkVersionUpgrade();
+
     // Start server and install hooks
+    const hooksEnabled = this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.hooksEnabled, true);
+
     this.server.start().then(() => {
       this.server.onEvent('claude', (event) => {
-        handleHookEvent(event, this.agentManager.getAllAgents(), (agentId, msg) => {
+        handleHookEvent(event, this.agentManager.getAllAgents(), (_agentId, msg) => {
           this.onAgentUpdate(msg);
         });
       });
 
-      return installHooks(this.server.port, this.server.token);
+      if (hooksEnabled) {
+        return installHooks(this.server.port, this.server.token);
+      }
     }).catch((err) => {
       console.error('Failed to start server:', err);
     });
 
+    // Initialize watchAllSessions setting
+    const watchAllSessions = this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.watchAllSessions, false);
+    this.fileWatcher.setWatchAllSessions(watchAllSessions);
+
     this.sendInitialMessages();
+  }
+
+  private handleWebviewMessage(message: unknown): void {
+    if (!message || typeof message !== 'object') {
+      return;
+    }
+
+    const msg = message as Record<string, unknown>;
+
+    switch (msg.type) {
+      case 'addAssetDirectory': {
+        this.addAssetDirectory();
+        break;
+      }
+      case 'watchAllSessions': {
+        if (typeof msg.enabled === 'boolean') {
+          this.context.globalState.update(GLOBAL_STATE_KEYS.watchAllSessions, msg.enabled);
+          this.fileWatcher.setWatchAllSessions(msg.enabled);
+        }
+        break;
+      }
+      case 'setSetting': {
+        if (typeof msg.key === 'string' && msg.key in GLOBAL_STATE_KEYS) {
+          const key = msg.key as keyof typeof GLOBAL_STATE_KEYS;
+          this.context.globalState.update(GLOBAL_STATE_KEYS[key], msg.value);
+        }
+        break;
+      }
+      case 'setHooksEnabled': {
+        if (typeof msg.enabled === 'boolean') {
+          this.context.globalState.update(GLOBAL_STATE_KEYS.hooksEnabled, msg.enabled);
+          if (msg.enabled) {
+            installHooks(this.server.port, this.server.token).catch(() => {});
+          } else {
+            uninstallHooks().catch(() => {});
+          }
+        }
+        break;
+      }
+      case 'settingsLoaded': {
+        this.sendSettingsToWebview();
+        break;
+      }
+    }
+  }
+
+  private checkVersionUpgrade(): void {
+    const lastSeenVersion = this.context.globalState.get<string>(GLOBAL_STATE_KEYS.lastSeenVersion, '');
+    if (lastSeenVersion !== EXTENSION_VERSION) {
+      this.context.globalState.update(GLOBAL_STATE_KEYS.lastSeenVersion, EXTENSION_VERSION);
+      if (this.webviewView) {
+        this.webviewView.webview.postMessage({
+          type: 'versionUpgraded',
+          oldVersion: lastSeenVersion,
+          newVersion: EXTENSION_VERSION,
+        });
+      }
+    }
+  }
+
+  private sendSettingsToWebview(): void {
+    if (!this.webviewView) {
+      return;
+    }
+
+    const settings = {
+      soundEnabled: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.soundEnabled, true),
+      alwaysShowLabels: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.alwaysShowLabels, false),
+      watchAllSessions: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.watchAllSessions, false),
+      hooksEnabled: this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.hooksEnabled, true),
+    };
+
+    this.webviewView.webview.postMessage({
+      type: 'settingsLoaded',
+      settings,
+    });
+  }
+
+  private async addAssetDirectory(): Promise<void> {
+    if (!this.webviewView) {
+      return;
+    }
+
+    const selected = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: 'Select Asset Directory',
+    });
+
+    if (!selected || selected.length === 0) {
+      return;
+    }
+
+    const dirPath = selected[0].fsPath;
+    const dirs = this.context.globalState.get<string[]>(GLOBAL_STATE_KEYS.externalAssetDirs, []);
+
+    if (!dirs.includes(dirPath)) {
+      dirs.push(dirPath);
+      this.context.globalState.update(GLOBAL_STATE_KEYS.externalAssetDirs, dirs);
+    }
+
+    // Rescan and send updated assets to webview
+    const externalAssets = getExternalAssetUris(this.context, this.webviewView.webview);
+    this.webviewView.webview.postMessage({
+      type: 'externalAssetsLoaded',
+      assets: externalAssets,
+    });
   }
 
   private onAgentUpdate(message: WebviewMessage): void {

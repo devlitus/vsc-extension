@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Furniture Manifest Editor</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background-color: #1e1e1e;
+      color: #cccccc;
+      font-size: 14px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #ffffff;
+      font-size: 20px;
+      margin-bottom: 24px;
+      font-weight: 600;
+    }
+
+    .form-section {
+      background-color: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .form-section h2 {
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 16px 0;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #3c3c3c;
+    }
+
+    .form-row {
+      display: flex;
+      margin-bottom: 12px;
+      align-items: flex-start;
+    }
+
+    .form-row:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: inline-block;
+      width: 140px;
+      flex-shrink: 0;
+      padding-top: 6px;
+      color: #cccccc;
+    }
+
+    input[type="text"],
+    input[type="number"] {
+      flex: 1;
+      background-color: #3c3c3c;
+      border: 1px solid #3c3c3c;
+      border-radius: 2px;
+      color: #ffffff;
+      padding: 6px 8px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus {
+      border-color: #007acc;
+    }
+
+    input[type="number"] {
+      width: 80px;
+    }
+
+    .size-inputs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .size-inputs input {
+      width: 80px;
+    }
+
+    .size-separator {
+      padding-top: 6px;
+      color: #808080;
+    }
+
+    select[multiple] {
+      flex: 1;
+      background-color: #3c3c3c;
+      border: 1px solid #3c3c3c;
+      border-radius: 2px;
+      color: #ffffff;
+      padding: 6px 8px;
+      font-size: 13px;
+      min-height: 100px;
+      outline: none;
+    }
+
+    select[multiple]:focus {
+      border-color: #007acc;
+    }
+
+    .sprite-list {
+      flex: 1;
+    }
+
+    .sprite-entry {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      background-color: #2d2d2d;
+      padding: 8px;
+      border-radius: 4px;
+    }
+
+    .sprite-entry input[type="text"] {
+      flex: 1;
+    }
+
+    .sprite-entry input[type="file"] {
+      background: transparent;
+      border: none;
+      color: #cccccc;
+      font-size: 12px;
+    }
+
+    .sprite-preview {
+      width: 64px;
+      height: 64px;
+      background-color: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .sprite-preview img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      image-rendering: pixelated;
+    }
+
+    .sprite-preview-empty {
+      color: #606060;
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .btn {
+      padding: 6px 16px;
+      border: none;
+      border-radius: 2px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .btn-primary {
+      background-color: #0e639c;
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      background-color: #1177bb;
+    }
+
+    .btn-secondary {
+      background-color: #3c3c3c;
+      color: #cccccc;
+    }
+
+    .btn-secondary:hover {
+      background-color: #4a4a4a;
+    }
+
+    .btn-danger {
+      background-color: #c42b1c;
+      color: #ffffff;
+    }
+
+    .btn-danger:hover {
+      background-color: #d83a24;
+    }
+
+    .btn-small {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    .btn-icon {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+
+    .states-list {
+      flex: 1;
+    }
+
+    .state-entry {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .state-entry input {
+      width: 200px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    #import-input {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Furniture Manifest Editor</h1>
+
+    <div class="form-section">
+      <h2>Basic Info</h2>
+      <div class="form-row">
+        <label for="id">ID</label>
+        <input type="text" id="id" placeholder="my-custom-desk">
+      </div>
+      <div class="form-row">
+        <label for="name">Name</label>
+        <input type="text" id="name" placeholder="Custom Desk">
+      </div>
+      <div class="form-row">
+        <label for="frames">Frames</label>
+        <input type="number" id="frames" value="1" min="1">
+      </div>
+      <div class="form-row">
+        <label>Size</label>
+        <div class="size-inputs">
+          <input type="number" id="size-w" value="1" min="1">
+          <span class="size-separator">x</span>
+          <input type="number" id="size-h" value="1" min="1">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h2>Rotations</h2>
+      <div class="form-row">
+        <label>Directions</label>
+        <select id="rotations" multiple>
+          <option value="n">North (N)</option>
+          <option value="e">East (E)</option>
+          <option value="s">South (S)</option>
+          <option value="w">West (W)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h2>States</h2>
+      <div class="form-row">
+        <label>State List</label>
+        <div class="states-list" id="states-list">
+          <!-- State entries will be added here -->
+        </div>
+      </div>
+      <div class="form-row">
+        <label>&nbsp;</label>
+        <button type="button" class="btn btn-secondary btn-small" id="add-state">+ Add State</button>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h2>Sprites</h2>
+      <div class="form-row">
+        <label>Sprite List</label>
+        <div class="sprite-list" id="sprite-list">
+          <!-- Sprite entries will be added here -->
+        </div>
+      </div>
+      <div class="form-row">
+        <label>&nbsp;</label>
+        <button type="button" class="btn btn-secondary btn-small" id="add-sprite">+ Add Sprite</button>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h2>Preview</h2>
+      <div class="form-row">
+        <label>Selected Sprite</label>
+        <div class="sprite-preview" id="sprite-preview">
+          <span class="sprite-preview-empty">No image</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn btn-primary" id="export-btn">Export manifest.json</button>
+      <button type="button" class="btn btn-secondary" id="import-btn">Import manifest.json</button>
+      <input type="file" id="import-input" accept=".json,application/json">
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // State management
+      let sprites = [];
+      let states = [];
+
+      // DOM Elements
+      const spriteListEl = document.getElementById('sprite-list');
+      const statesListEl = document.getElementById('states-list');
+      const spritePreviewEl = document.getElementById('sprite-preview');
+      const exportBtn = document.getElementById('export-btn');
+      const importBtn = document.getElementById('import-btn');
+      const importInput = document.getElementById('import-input');
+      const addSpriteBtn = document.getElementById('add-sprite');
+      const addStateBtn = document.getElementById('add-state');
+
+      // Create sprite entry HTML
+      function createSpriteEntry(sprite, index) {
+        const div = document.createElement('div');
+        div.className = 'sprite-entry';
+        div.dataset.index = index;
+
+        div.innerHTML = `
+          <input type="text" class="sprite-name" value="${escapeHtml(sprite || '')}" placeholder="sprite.png">
+          <input type="file" class="sprite-file" accept="image/png">
+          <div class="sprite-preview-thumb" style="width:32px;height:32px;background:#1e1e1e;border:1px solid #3c3c3c;border-radius:2px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+            <span style="font-size:10px;color:#606060;">?</span>
+          </div>
+          <button type="button" class="btn btn-danger btn-icon btn-small remove-sprite">×</button>
+        `;
+
+        const fileInput = div.querySelector('.sprite-file');
+        const nameInput = div.querySelector('.sprite-name');
+        const thumb = div.querySelector('.sprite-preview-thumb');
+
+        nameInput.addEventListener('input', (e) => {
+          sprites[index] = e.target.value;
+        });
+
+        fileInput.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const dataUri = ev.target.result;
+              // Update the preview in the main preview area
+              updateMainPreview(dataUri);
+              // Update thumbnail
+              thumb.innerHTML = `<img src="${dataUri}" style="max-width:100%;max-height:100%;object-fit:contain;image-rendering:pixelated;">`;
+            };
+            reader.readAsDataURL(file);
+          }
+        });
+
+        div.querySelector('.remove-sprite').addEventListener('click', () => {
+          sprites.splice(index, 1);
+          renderSprites();
+        });
+
+        return div;
+      }
+
+      // Create state entry HTML
+      function createStateEntry(state, index) {
+        const div = document.createElement('div');
+        div.className = 'state-entry';
+        div.dataset.index = index;
+
+        div.innerHTML = `
+          <input type="text" class="state-name" value="${escapeHtml(state || '')}" placeholder="state-name">
+          <button type="button" class="btn btn-danger btn-icon btn-small remove-state">×</button>
+        `;
+
+        const input = div.querySelector('.state-name');
+        input.addEventListener('input', (e) => {
+          states[index] = e.target.value;
+        });
+
+        div.querySelector('.remove-state').addEventListener('click', () => {
+          states.splice(index, 1);
+          renderStates();
+        });
+
+        return div;
+      }
+
+      // Render sprite list
+      function renderSprites() {
+        spriteListEl.innerHTML = '';
+        sprites.forEach((sprite, index) => {
+          spriteListEl.appendChild(createSpriteEntry(sprite, index));
+        });
+      }
+
+      // Render state list
+      function renderStates() {
+        statesListEl.innerHTML = '';
+        states.forEach((state, index) => {
+          statesListEl.appendChild(createStateEntry(state, index));
+        });
+      }
+
+      // Update main sprite preview
+      function updateMainPreview(dataUri) {
+        if (dataUri) {
+          spritePreviewEl.innerHTML = `<img src="${dataUri}" alt="Sprite Preview">`;
+        } else {
+          spritePreviewEl.innerHTML = '<span class="sprite-preview-empty">No image</span>';
+        }
+      }
+
+      // Escape HTML
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      // Add new sprite
+      addSpriteBtn.addEventListener('click', () => {
+        sprites.push('');
+        renderSprites();
+      });
+
+      // Add new state
+      addStateBtn.addEventListener('click', () => {
+        states.push('');
+        renderStates();
+      });
+
+      // Export manifest
+      exportBtn.addEventListener('click', () => {
+        const manifest = {
+          id: document.getElementById('id').value.trim(),
+          name: document.getElementById('name').value.trim(),
+          sprites: sprites.filter(s => s.trim() !== ''),
+          rotations: Array.from(document.getElementById('rotations').selectedOptions).map(o => o.value),
+          states: states.filter(s => s.trim() !== ''),
+          frames: parseInt(document.getElementById('frames').value, 10) || 1,
+          size: {
+            w: parseInt(document.getElementById('size-w').value, 10) || 1,
+            h: parseInt(document.getElementById('size-h').value, 10) || 1
+          }
+        };
+
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'manifest.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+
+      // Import manifest
+      importBtn.addEventListener('click', () => {
+        importInput.click();
+      });
+
+      importInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const manifest = JSON.parse(ev.target.result);
+
+            // Populate form
+            document.getElementById('id').value = manifest.id || '';
+            document.getElementById('name').value = manifest.name || '';
+            document.getElementById('frames').value = manifest.frames || 1;
+            document.getElementById('size-w').value = manifest.size?.w || 1;
+            document.getElementById('size-h').value = manifest.size?.h || 1;
+
+            // Rotations
+            const rotationsSelect = document.getElementById('rotations');
+            const rotationSet = new Set(manifest.rotations || []);
+            Array.from(rotationsSelect.options).forEach(option => {
+              option.selected = rotationSet.has(option.value);
+            });
+
+            // Sprites
+            sprites = manifest.sprites || [];
+            renderSprites();
+
+            // States
+            states = manifest.states || [];
+            renderStates();
+
+            // Clear preview
+            updateMainPreview(null);
+
+          } catch (err) {
+            alert('Failed to parse manifest.json: ' + err.message);
+          }
+        };
+        reader.readAsText(file);
+        // Reset input so same file can be imported again
+        importInput.value = '';
+      });
+
+      // Initialize with one empty sprite and state
+      sprites = [''];
+      states = [''];
+      renderSprites();
+      renderStates();
+    })();
+  </script>
+</body>
+</html>

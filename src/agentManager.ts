@@ -34,6 +34,8 @@ export class AgentManager {
       lastDataAt: 0,
       linesProcessed: 0,
       seenUnknownRecordTypes: new Set<string>(),
+      contextUsed: undefined,
+      contextMax: undefined,
     };
 
     if (terminal) {
