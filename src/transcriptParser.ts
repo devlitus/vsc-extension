@@ -108,6 +108,15 @@ function isWebviewMessage(msg: unknown): msg is WebviewMessage {
     case 'layoutLoaded':
     case 'assetsLoaded':
       return 'layout' in record || 'manifest' in record;
+    case 'contextUpdate':
+      return (
+        'agentId' in record && typeof record.agentId === 'number' &&
+        'contextUsed' in record && typeof record.contextUsed === 'number' &&
+        'contextMax' in record && typeof record.contextMax === 'number'
+      );
+    case 'rateLimitEnter':
+    case 'rateLimitExit':
+      return 'agentId' in record && typeof record.agentId === 'number';
     default:
       return false;
   }
@@ -236,6 +245,44 @@ export function processTranscriptLine(
         if (record.tool !== undefined) {
           const msg: WebviewMessage = {
             type: 'permissionRequest',
+            agentId: agentState.id,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+        break;
+      }
+
+      case 'system': {
+        if (record.turn_duration) {
+          const duration = record.turn_duration as Record<string, number>;
+          const inputTokens = duration.input_tokens ?? 0;
+          const cacheReadTokens = duration.cache_read_input_tokens ?? 0;
+          const contextWindow = duration.context_window ?? 0;
+          
+          if (contextWindow > 0) {
+            agentState.contextUsed = inputTokens + cacheReadTokens;
+            agentState.contextMax = contextWindow;
+            
+            const msg: WebviewMessage = {
+              type: 'contextUpdate',
+              agentId: agentState.id,
+              contextUsed: agentState.contextUsed,
+              contextMax: agentState.contextMax,
+            };
+            if (isWebviewMessage(msg)) {
+              onUpdate(msg);
+            }
+          }
+        }
+        break;
+      }
+
+      case 'error': {
+        if (record.subtype === 'rate_limit') {
+          const msg: WebviewMessage = {
+            type: 'rateLimitEnter',
             agentId: agentState.id,
           };
           if (isWebviewMessage(msg)) {
