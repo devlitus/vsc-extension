@@ -214,14 +214,19 @@ export function processTranscriptLine(
       }
 
       case 'turn': {
-        if (record.action === 'end') {
-          const msg: WebviewMessage = {
-            type: 'turnEnd',
-            agentId: agentState.id,
-          };
-          if (isWebviewMessage(msg)) {
-            onUpdate(msg);
+        if (record.action === 'start') {
+          agentState.hookDelivered = false;
+        } else if (record.action === 'end') {
+          if (!agentState.hookDelivered) {
+            const msg: WebviewMessage = {
+              type: 'turnEnd',
+              agentId: agentState.id,
+            };
+            if (isWebviewMessage(msg)) {
+              onUpdate(msg);
+            }
           }
+          agentState.hookDelivered = false;
           agentState.hadToolsInTurn = false;
         }
         break;

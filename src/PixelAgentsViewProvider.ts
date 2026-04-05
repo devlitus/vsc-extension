@@ -5,6 +5,9 @@ import { FileWatcher } from './fileWatcher';
 import { getAssetUris } from './assetLoader';
 import { loadLayout, saveLayout } from './layoutPersistence';
 import { WebviewMessage, AssetManifest } from './types';
+import { PixelAgentsServer } from './server/server';
+import { installHooks, uninstallHooks } from './server/providers/file/claudeHookInstaller';
+import { handleHookEvent } from './server/hookEventHandler';
 
 const HTML_SANITIZE_PATTERN = /[<>&"']/g;
 
@@ -59,6 +62,7 @@ function sanitizeMessage(msg: WebviewMessage): WebviewMessage {
       return {
         type: 'turnEnd',
         agentId: msg.agentId,
+        source: msg.source,
       };
     case 'permissionRequest':
       return {
@@ -88,11 +92,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private agentManager: AgentManager;
   private timerManager: TimerManager;
   private fileWatcher: FileWatcher;
+  private server: PixelAgentsServer;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.agentManager = new AgentManager();
     this.timerManager = new TimerManager();
     this.fileWatcher = new FileWatcher(this.agentManager, this.onAgentUpdate.bind(this));
+    this.server = new PixelAgentsServer();
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -105,6 +111,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.getHtmlForWebview();
 
     this.fileWatcher.start();
+
+    // Start server and install hooks
+    this.server.start().then(() => {
+      this.server.onEvent('claude', (event) => {
+        handleHookEvent(event, this.agentManager.getAllAgents(), (agentId, msg) => {
+          this.onAgentUpdate(msg);
+        });
+      });
+
+      return installHooks(this.server.port, this.server.token);
+    }).catch((err) => {
+      console.error('Failed to start server:', err);
+    });
 
     this.sendInitialMessages();
   }
@@ -181,5 +200,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.timerManager.disposeAll();
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
+
+    uninstallHooks().catch(() => {});
+    this.server.stop().catch(() => {});
   }
 }
