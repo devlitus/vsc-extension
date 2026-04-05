@@ -1,0 +1,255 @@
+import * as os from 'os';
+import * as path from 'path';
+import { AgentState, WebviewMessage } from './types';
+
+const POLL_PROTOTYPE_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+export function deepCloneWithProtection<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  if (obj instanceof Set) {
+    return new Set([...obj].map(item => deepCloneWithProtection(item))) as unknown as T;
+  }
+
+  if (obj instanceof Map) {
+    const result = new Map();
+    for (const [k, v] of obj.entries()) {
+      result.set(deepCloneWithProtection(k), deepCloneWithProtection(v));
+    }
+    return result as unknown as T;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => deepCloneWithProtection(item)) as unknown as T;
+  }
+
+  const clone = {} as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (POLL_PROTOTYPE_KEYS.includes(key)) {
+      continue;
+    }
+    clone[key] = deepCloneWithProtection((obj as Record<string, unknown>)[key]);
+  }
+  return clone as T;
+}
+
+export function formatToolStatus(toolName: string, status: string): string {
+  if (toolName === 'Bash') {
+    const truncated = status.length > 60 ? status.substring(0, 60) + '...' : status;
+    return truncated;
+  }
+
+  if (toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') {
+    const parts = status.split(' ');
+    if (parts.length > 0) {
+      return parts[parts.length - 1];
+    }
+    return status;
+  }
+
+  if (toolName === 'WebFetch' || toolName === 'WebSearch') {
+    const urlOrQuery = status.split('?')[0] || status;
+    return urlOrQuery;
+  }
+
+  return status;
+}
+
+interface TranscriptRecord {
+  type?: string;
+  [key: string]: unknown;
+}
+
+function isValidTranscriptRecord(obj: unknown): obj is TranscriptRecord {
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
+  return true;
+}
+
+function isWebviewMessage(msg: unknown): msg is WebviewMessage {
+  if (typeof msg !== 'object' || msg === null) {
+    return false;
+  }
+
+  const record = msg as Record<string, unknown>;
+
+  if (!('type' in record) || typeof record.type !== 'string') {
+    return false;
+  }
+
+  switch (record.type) {
+    case 'agentAdded':
+      return (
+        'agentId' in record && typeof record.agentId === 'number' &&
+        'sessionId' in record && typeof record.sessionId === 'string'
+      );
+    case 'agentRemoved':
+      return 'agentId' in record && typeof record.agentId === 'number';
+    case 'toolStart':
+      return (
+        'agentId' in record && typeof record.agentId === 'number' &&
+        'toolName' in record && typeof record.toolName === 'string' &&
+        'status' in record && typeof record.status === 'string'
+      );
+    case 'toolEnd':
+      return 'agentId' in record && typeof record.agentId === 'number';
+    case 'toolProgress':
+      return (
+        'agentId' in record && typeof record.agentId === 'number' &&
+        'status' in record && typeof record.status === 'string'
+      );
+    case 'turnEnd':
+      return 'agentId' in record && typeof record.agentId === 'number';
+    case 'permissionRequest':
+      return 'agentId' in record && typeof record.agentId === 'number';
+    case 'layoutLoaded':
+    case 'assetsLoaded':
+      return 'layout' in record || 'manifest' in record;
+    default:
+      return false;
+  }
+}
+
+export function processTranscriptLine(
+  line: string,
+  agentState: AgentState,
+  onUpdate: (message: WebviewMessage) => void
+): void {
+  if (!line.trim()) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(line);
+
+    if (!isValidTranscriptRecord(parsed)) {
+      return;
+    }
+
+    const record = deepCloneWithProtection(parsed);
+
+    if (POLL_PROTOTYPE_KEYS.some(key => key in record)) {
+      return;
+    }
+
+    const type = record.type;
+
+    if (typeof type !== 'string') {
+      return;
+    }
+
+    switch (type) {
+      case 'start': {
+        if (typeof record.sessionId === 'string') {
+          agentState.sessionId = record.sessionId;
+        }
+        const msg: WebviewMessage = {
+          type: 'agentAdded',
+          agentId: agentState.id,
+          sessionId: agentState.sessionId,
+        };
+        if (isWebviewMessage(msg)) {
+          onUpdate(msg);
+        }
+        break;
+      }
+
+      case 'tool': {
+        const toolName = typeof record.tool === 'string' ? record.tool : '';
+        const toolId = typeof record.toolId === 'string' ? record.toolId : '';
+        const status = typeof record.status === 'string' ? record.status : '';
+
+        if (record.action === 'start') {
+          agentState.activeToolIds.add(toolId);
+          agentState.activeToolStatuses.set(toolId, status);
+          agentState.activeToolNames.set(toolId, toolName);
+          agentState.hadToolsInTurn = true;
+
+          const msg: WebviewMessage = {
+            type: 'toolStart',
+            agentId: agentState.id,
+            toolName,
+            status: formatToolStatus(toolName, status),
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        } else if (record.action === 'result' || record.action === 'end') {
+          agentState.activeToolIds.delete(toolId);
+          agentState.activeToolStatuses.delete(toolId);
+          agentState.activeToolNames.delete(toolId);
+
+          const msg: WebviewMessage = {
+            type: 'toolEnd',
+            agentId: agentState.id,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+        break;
+      }
+
+      case 'progress': {
+        const toolId = typeof record.toolId === 'string' ? record.toolId : '';
+        const status = typeof record.status === 'string' ? record.status : '';
+
+        if (agentState.activeToolIds.has(toolId)) {
+          agentState.activeToolStatuses.set(toolId, status);
+
+          const toolName = agentState.activeToolNames.get(toolId) || '';
+          const msg: WebviewMessage = {
+            type: 'toolProgress',
+            agentId: agentState.id,
+            status: formatToolStatus(toolName, status),
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+        break;
+      }
+
+      case 'turn': {
+        if (record.action === 'end') {
+          const msg: WebviewMessage = {
+            type: 'turnEnd',
+            agentId: agentState.id,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+          agentState.hadToolsInTurn = false;
+        }
+        break;
+      }
+
+      case 'permission': {
+        if (record.tool !== undefined) {
+          const msg: WebviewMessage = {
+            type: 'permissionRequest',
+            agentId: agentState.id,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+        break;
+      }
+
+      default:
+        if (!agentState.seenUnknownRecordTypes.has(type)) {
+          agentState.seenUnknownRecordTypes.add(type);
+        }
+        break;
+    }
+
+    agentState.lastDataAt = Date.now();
+    agentState.linesProcessed++;
+  } catch {
+    // Skip malformed JSON lines
+  }
+}
