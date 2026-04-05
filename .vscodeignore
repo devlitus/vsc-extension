@@ -1,0 +1,32 @@
+# Source files
+src/
+webview-ui/src/
+server/src/
+
+# Dependencies
+webview-ui/node_modules/
+server/node_modules/
+node_modules/
+
+# Build outputs
+# dist/ is NOT ignored - it contains the compiled extension
+
+# Test files
+*.test.ts
+*.test.tsx
+e2e/
+
+# Scripts
+scripts/
+
+# Documentation
+docs/
+
+# Config files
+.eslintrc
+.eslintrc.json
+tsconfig.json
+.gitignore
+.DS_Store
+
+# License - NOT ignored, vsce requires it
