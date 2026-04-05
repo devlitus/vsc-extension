@@ -122,6 +122,42 @@ function isWebviewMessage(msg: unknown): msg is WebviewMessage {
   }
 }
 
+interface ToolSummary {
+  name: string;
+  count: number;
+}
+
+interface TurnSummary {
+  startedAt: number;
+  endedAt: number;
+  toolsUsed: ToolSummary[];
+  tokensUsed: number;
+}
+
+function finalizeTurn(agentState: AgentState): void {
+  if (agentState.currentTurnStartTime === undefined) {
+    return;
+  }
+
+  const duration = Date.now() - agentState.currentTurnStartTime;
+  const turnSummary: TurnSummary = {
+    startedAt: agentState.currentTurnStartTime,
+    endedAt: Date.now(),
+    toolsUsed: agentState.toolsThisTurn.map(t => ({ name: t.name, count: t.count })),
+    tokensUsed: 0,
+  };
+
+  // Circular buffer: keep last 20 turn summaries
+  if (agentState.turnHistory.length >= 20) {
+    agentState.turnHistory.shift();
+  }
+  agentState.turnHistory.push(turnSummary);
+
+  // Reset turn state
+  agentState.toolsThisTurn = [];
+  agentState.currentTurnStartTime = undefined;
+}
+
 export function processTranscriptLine(
   line: string,
   agentState: AgentState,
@@ -177,6 +213,14 @@ export function processTranscriptLine(
           agentState.activeToolNames.set(toolId, toolName);
           agentState.hadToolsInTurn = true;
 
+          // Track tools for inspection panel
+          const existingTool = agentState.toolsThisTurn.find(t => t.name === toolName);
+          if (existingTool) {
+            existingTool.count++;
+          } else {
+            agentState.toolsThisTurn.push({ name: toolName, count: 1 });
+          }
+
           const msg: WebviewMessage = {
             type: 'toolStart',
             agentId: agentState.id,
@@ -225,7 +269,10 @@ export function processTranscriptLine(
       case 'turn': {
         if (record.action === 'start') {
           agentState.hookDelivered = false;
+          agentState.toolsThisTurn = [];
+          agentState.currentTurnStartTime = Date.now();
         } else if (record.action === 'end') {
+          finalizeTurn(agentState);
           if (!agentState.hookDelivered) {
             const msg: WebviewMessage = {
               type: 'turnEnd',
@@ -255,6 +302,16 @@ export function processTranscriptLine(
       }
 
       case 'system': {
+        // Extract model if not yet set
+        if (!agentState.model && record.model) {
+          agentState.model = record.model as string;
+        }
+
+        // Extract system prompt from init type or system_prompt field
+        if ((record.type === 'init' || record.system_prompt !== undefined) && !agentState.systemPrompt) {
+          agentState.systemPrompt = (record.system_prompt as string) ?? (record.prompt as string) ?? undefined;
+        }
+
         if (record.turn_duration) {
           const duration = record.turn_duration as Record<string, number>;
           const inputTokens = duration.input_tokens ?? 0;

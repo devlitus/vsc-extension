@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
 
+export interface TurnSummary {
+  startedAt: number;
+  endedAt: number;
+  toolsUsed: Array<{ name: string; count: number }>;
+  tokensUsed: number;
+}
+
 export interface AgentState {
   id: number;
   sessionId: string;
@@ -23,6 +30,13 @@ export interface AgentState {
   seenUnknownRecordTypes: Set<string>;
   contextUsed?: number;
   contextMax?: number;
+  model?: string;
+  systemPrompt?: string;
+  branch?: string | null;
+  toolsThisTurn: Array<{ name: string; count: number }>;
+  turnHistory: TurnSummary[];
+  currentTurnStartTime?: number;
+  isInterrupted?: boolean;
 }
 
 export interface PersistedAgent {
@@ -50,7 +64,12 @@ export type WebviewMessage =
   | { type: 'rateLimitExit'; agentId: number }
   | { type: 'externalAssetsLoaded'; assets: unknown }
   | { type: 'versionUpgraded'; oldVersion: string; newVersion: string }
-  | { type: 'settingsLoaded'; settings: SettingsData };
+  | { type: 'settingsLoaded'; settings: SettingsData }
+  | { type: 'openInspectionPanel'; agentId: number }
+  | { type: 'inspectionData'; agentId: number; model?: string; cwd: string; branch?: string | null; systemPrompt?: string; contextUsed: number; contextMax: number; rateLimit: boolean; currentTurnDuration: number; toolsThisTurn: Array<{ name: string; count: number }>; turnHistory: TurnSummary[] }
+  | { type: 'agentAction'; agentId: number; action: 'interrupt' | 'redirect'; payload?: { newCwd?: string } }
+  | { type: 'agentChatMessage'; agentId: number; text: string }
+  | { type: 'agentDisconnected'; agentId: number };
 
 export type AgentUpdateCallback = (message: WebviewMessage) => void;
 
