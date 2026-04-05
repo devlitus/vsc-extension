@@ -1,9 +1,10 @@
-import { Character, Seat, OfficeLayout, Position } from '../types';
+import { Character, Seat, OfficeLayout, Position, SubagentCharacter } from '../types';
 import { TileMap } from '../layout/tileMap';
 import { bfsPath } from './characters';
 
 export interface OfficeState {
   characters: Map<number, Character>;
+  subagents: Map<string, SubagentCharacter>;
   seats: Seat[];
   layout: OfficeLayout;
   tileMap: TileMap;
@@ -28,6 +29,7 @@ export function createOfficeState(layout?: OfficeLayout): OfficeState {
   
   return {
     characters: new Map(),
+    subagents: new Map(),
     seats: [...(defaultLayout.seats ?? [])],
     layout: defaultLayout,
     tileMap,
@@ -65,6 +67,42 @@ export function removeCharacter(state: OfficeState, id: number): void {
   if (state.selectedCharacterId === id) {
     state.selectedCharacterId = null;
   }
+}
+
+export function addSubagent(state: OfficeState, agentId: number, toolId: string, parentId: number): SubagentCharacter {
+  const parent = state.characters.get(parentId);
+  const id = `${agentId}:${toolId}`;
+
+  // Offset position from parent in a random direction
+  const offsets = [
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+  ];
+  const offset = offsets[Math.floor(Math.random() * offsets.length)];
+  const position: Position = parent
+    ? { x: parent.position.x + offset.x, y: parent.position.y + offset.y }
+    : { x: 5, y: 5 };
+
+  const subagent: SubagentCharacter = {
+    id,
+    agentId,
+    toolId,
+    position,
+    state: 'animating',
+    linkedToParentId: parentId,
+    animFrame: 0,
+    animTimer: 0,
+  };
+
+  state.subagents.set(id, subagent);
+  return subagent;
+}
+
+export function removeSubagent(state: OfficeState, agentId: number, toolId: string): void {
+  const id = `${agentId}:${toolId}`;
+  state.subagents.delete(id);
 }
 
 export function setLayout(state: OfficeState, layout: OfficeLayout): void {

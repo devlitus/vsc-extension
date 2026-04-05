@@ -1,4 +1,4 @@
-import { OfficeState, createOfficeState, addCharacter } from './officeState';
+import { OfficeState, createOfficeState, addCharacter, addSubagent, removeSubagent } from './officeState';
 import { updateCharacters } from './characters';
 import { render } from './renderer';
 
@@ -106,6 +106,52 @@ function processMessageQueue(state: OfficeState): void {
           for (const char of state.characters.values()) {
             char.state = 'idle';
             char.bubbleType = undefined;
+          }
+        }
+        break;
+
+      case 'subagentToolStart':
+        if (typeof message.agentId === 'number' && typeof message.toolId === 'string') {
+          const parentId = message.parentId as number | undefined ?? message.agentId;
+          addSubagent(state, message.agentId, message.toolId, parentId);
+        }
+        break;
+
+      case 'subagentToolDone':
+      case 'subagentClear':
+        if (typeof message.agentId === 'number' && typeof message.toolId === 'string') {
+          removeSubagent(state, message.agentId, message.toolId);
+        }
+        break;
+
+      case 'contextUpdate':
+        if (typeof message.agentId === 'number') {
+          const char = state.characters.get(message.agentId);
+          if (char) {
+            char.contextUsed = message.contextUsed as number | undefined;
+            char.contextMax = message.contextMax as number | undefined;
+          }
+        }
+        break;
+
+      case 'rateLimitEnter':
+        if (typeof message.agentId === 'number') {
+          const char = state.characters.get(message.agentId);
+          if (char) {
+            char.isRateLimited = true;
+            char.bubbleType = 'zzz';
+          }
+        }
+        break;
+
+      case 'rateLimitExit':
+        if (typeof message.agentId === 'number') {
+          const char = state.characters.get(message.agentId);
+          if (char) {
+            char.isRateLimited = false;
+            if (char.bubbleType === 'zzz') {
+              char.bubbleType = undefined;
+            }
           }
         }
         break;
