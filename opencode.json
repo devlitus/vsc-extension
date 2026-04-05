@@ -14,16 +14,9 @@
         }
       }
     },
-    "github Copilot": {
-      "npm": "@ai-sdk/github-copilot",
-      "name": "github Copilot",
+    "github-copilot": {
       "options": {
-        "baseURL": "https://api.github.com"
-      },
-      "models": {
-        "github Copilot": {
-          "name": "github Copilot"
-        }
+        "baseURL": "https://api.githubcopilot.com"
       }
     }
   }

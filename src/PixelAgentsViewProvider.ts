@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AgentManager } from './agentManager';
 import { TimerManager } from './timerManager';
 import { FileWatcher } from './fileWatcher';
@@ -80,16 +82,14 @@ function sanitizeMessage(msg: WebviewMessage): WebviewMessage {
         type: 'permissionRequest',
         agentId: msg.agentId,
       };
-    case 'layoutLoaded':
-      return {
-        type: 'layoutLoaded',
-        layout: msg.layout,
-      };
-    case 'assetsLoaded':
-      return {
-        type: 'assetsLoaded',
-        manifest: msg.manifest,
-      };
+    case 'layoutLoaded': {
+      if (!msg.layout || typeof msg.layout !== 'object') return { type: 'layoutLoaded', layout: null };
+      return { type: 'layoutLoaded', layout: msg.layout };
+    }
+    case 'assetsLoaded': {
+      if (!msg.manifest || typeof msg.manifest !== 'object') return { type: 'assetsLoaded', manifest: null };
+      return { type: 'assetsLoaded', manifest: msg.manifest };
+    }
     default:
       return msg;
   }
@@ -163,6 +163,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     const msg = message as Record<string, unknown>;
 
+    // Type guards for webview messages
+    function isAgentActionMessage(msg: Record<string, unknown>): msg is { type: 'agentAction'; agentId: unknown; action: unknown; payload?: unknown } {
+      return msg.type === 'agentAction' && typeof msg.agentId === 'number' && typeof msg.action === 'string';
+    }
+    function isAgentChatMessage(msg: Record<string, unknown>): msg is { type: 'agentChatMessage'; agentId: unknown; text: unknown } {
+      return msg.type === 'agentChatMessage' && typeof msg.agentId === 'number' && typeof msg.text === 'string';
+    }
+    function isOpenInspectionPanelMessage(msg: Record<string, unknown>): msg is { type: 'openInspectionPanel'; agentId: unknown } {
+      return msg.type === 'openInspectionPanel' && typeof msg.agentId === 'number';
+    }
+
     switch (msg.type) {
       case 'addAssetDirectory': {
         this.addAssetDirectory();
@@ -198,31 +209,43 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'openInspectionPanel': {
-        if (typeof msg.agentId === 'number') {
-          const agentId = msg.agentId;
-          this.openInspectionAgentId = agentId;
-          const agent = this.agentManager.getAgent(agentId);
-          if (agent) {
-            // Get branch async then send inspectionData
-            this.agentManager.getBranch(agentId).then((branch) => {
-              if (this.webviewView && this.openInspectionAgentId === agentId) {
-                const data = this.agentManager.getInspectionData(agentId);
-                if (data) {
-                  this.webviewView.webview.postMessage({
-                    type: 'inspectionData',
-                    ...data,
-                    branch,
-                  });
-                }
+        if (!isOpenInspectionPanelMessage(msg)) break;
+        const agentId = msg.agentId as number;
+        this.openInspectionAgentId = agentId;
+        const agent = this.agentManager.getAgent(agentId);
+        if (agent) {
+          // Get branch async then send inspectionData
+          this.agentManager.getBranch(agentId).then((branch) => {
+            if (this.webviewView && this.openInspectionAgentId === agentId) {
+              const data = this.agentManager.getInspectionData(agentId);
+              if (data) {
+                this.webviewView.webview.postMessage({
+                  type: 'inspectionData',
+                  ...data,
+                  branch,
+                });
               }
-            });
-          }
+            }
+          });
         }
         break;
       }
       case 'agentAction': {
+        if (!isAgentActionMessage(msg)) break;
         const agentId = msg.agentId as number;
         const action = msg.action as string;
+        const agent = this.agentManager.getAgent(agentId);
+        if (!agent || !agent.terminalRef) {
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({
+              type: 'agentAction',
+              agentId,
+              action,
+              payload: { success: false, error: 'Agent not found or no terminal' },
+            });
+          }
+          break;
+        }
         if (action === 'interrupt') {
           const success = this.agentManager.interruptAgent(agentId);
           if (this.webviewView) {
@@ -236,6 +259,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         } else if (action === 'redirect') {
           const payload = msg.payload as { newCwd?: string } | undefined;
           let newCwd = payload?.newCwd as string | undefined;
+          const newCwdFromPayload = !!payload?.newCwd;
           if (!newCwd) {
             const selected = await vscode.window.showOpenDialog({
               canSelectFolders: true,
@@ -246,6 +270,29 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
               break;
             }
             newCwd = selected[0].fsPath;
+          }
+
+          // Validate newCwd if from payload (not from native folder picker)
+          if (newCwdFromPayload) {
+            let validCwd: string | null = null;
+            try {
+              const real = fs.realpathSync(path.resolve(newCwd));
+              if (fs.statSync(real).isDirectory()) {
+                validCwd = real;
+              }
+            } catch { /* invalid */ }
+            if (!validCwd) {
+              if (this.webviewView) {
+                this.webviewView.webview.postMessage({
+                  type: 'agentAction',
+                  agentId,
+                  action: 'redirect',
+                  payload: { success: false, error: 'Invalid working directory' },
+                });
+              }
+              break;
+            }
+            newCwd = validCwd;
           }
 
           // Interrupt the current agent first
@@ -276,11 +323,14 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case 'agentChatMessage': {
+        if (!isAgentChatMessage(msg)) break;
         const agentId = msg.agentId as number;
         const text = msg.text as string;
-        if (typeof text === 'string') {
-          this.agentManager.sendChatMessage(agentId, text);
+        const agent = this.agentManager.getAgent(agentId);
+        if (!agent || !agent.terminalRef) {
+          break;
         }
+        this.agentManager.sendChatMessage(agentId, text);
         break;
       }
     }

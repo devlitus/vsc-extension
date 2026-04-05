@@ -70,8 +70,7 @@ export default function App() {
       
       if (message.type === 'agentDisconnected') {
         if (inspectionAgentId === message.agentId) {
-          setInspectionPanelOpen(false);
-          setInspectionAgentId(null);
+          // Don't close panel; set inspectionData to null to show "Agent disconnected" banner
           setInspectionData(null);
         }
         return;
@@ -153,7 +152,7 @@ export default function App() {
   // Compute subagents for the current inspection agent
   const subagentsForInspection: SubagentInfo[] = inspectionAgentId !== null
     ? Array.from(officeState.subagents.values())
-        .filter(sa => sa.agentId === inspectionAgentId)
+        .filter(sa => sa.linkedToParentId === inspectionAgentId)
         .map(sa => ({
           agentId: sa.agentId,
           toolId: sa.toolId,
