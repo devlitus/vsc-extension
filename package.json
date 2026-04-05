@@ -4,9 +4,16 @@
   "type": "module",
   "private": true,
   "devDependencies": {
+    "@devlitusp/opencode-agent": "^0.0.6",
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
-  }
+  },
+  "scripts": {
+    "prepare": "opencode-agent inject"
+  },
+  "trustedDependencies": [
+    "@devlitusp/opencode-agent"
+  ]
 }
