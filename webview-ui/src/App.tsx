@@ -174,6 +174,14 @@ export default function App() {
         return;
       }
 
+      if (message.type === 'assetsLoaded') {
+        const manifest = message.manifest as { tilesetUri?: string } | null;
+        if (manifest?.tilesetUri) {
+          enqueueMessage({ type: 'tilesetReady', uri: manifest.tilesetUri });
+        }
+        return;
+      }
+
       // Pass all other messages to the game loop
       enqueueMessage(msg);
     };

@@ -23,6 +23,13 @@ export interface Character {
   contextUsed?: number;
   contextMax?: number;
   isRateLimited?: boolean;
+  // Walk-behavior fields
+  homePosition?: Position;      // desk/seat to return to
+  targetFacingDir?: FacingDir;  // direction to face when current walk ends
+  pendingState?: CharacterState; // state to enter when current walk ends
+  returnHomeAt?: number;        // timestamp: walk home after this (break timer)
+  isInMeeting?: boolean;       // whether this character is currently in a conference meeting
+  toolEndAt?: number;          // timestamp: apply toolEnd when reached (minimum display timer)
 }
 
 export interface SubagentCharacter {
@@ -61,7 +68,7 @@ export interface OfficeLayout {
 
 export type EditorTool = 'select' | 'paint' | 'erase' | 'place' | 'eyedropper' | 'pick';
 
-export type TileType = 'empty' | 'floor' | 'wall';
+export type TileType = 'empty' | 'floor' | 'wall' | 'floor2' | 'carpet';
 
 export interface SpriteEntry {
   url: string;
