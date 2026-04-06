@@ -1,0 +1,20 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "/^python3 -c \"\nimport json\nwith open\\('/home/carles/\\.claude/projects/-home-carles-work-vsc-extension/56388eb7-946f-4e2b-b497-621d033a9977\\.jsonl'\\) as f:\n    for line in f:\n        line = line\\.strip\\(\\)\n        if not line: continue\n        try:\n            d = json\\.loads\\(line\\)\n            if d\\.get\\('type'\\) == 'assistant':\n                msg = d\\.get\\('message', \\{\\}\\)\n                usage = msg\\.get\\('usage', \\{\\}\\)\n                if msg\\.get\\('stop_reason'\\) == 'end_turn' and usage:\n                    print\\('END_TURN \\+ usage:', json\\.dumps\\(usage\\)\\)\n                    break\n        except: pass\n\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^python3 -c \"\nimport json\nwith open\\('/home/carles/\\.claude/projects/-home-carles-work-vsc-extension/56388eb7-946f-4e2b-b497-621d033a9977\\.jsonl'\\) as f:\n    for line in f:\n        line = line\\.strip\\(\\)\n        if not line: continue\n        try:\n            d = json\\.loads\\(line\\)\n            if d\\.get\\('type'\\) == 'assistant':\n                msg = d\\.get\\('message', \\{\\}\\)\n                content = msg\\.get\\('content', \\[\\]\\)\n                for c in content:\n                    if isinstance\\(c, dict\\) and c\\.get\\('type'\\) == 'tool_use':\n                        print\\(f'msg_id=\\{msg\\.get\\(\\\\\"id\\\\\",\\\\\"\\\\\"\\)\\[:20\\]\\} stop=\\{msg\\.get\\(\\\\\"stop_reason\\\\\"\\)\\} tool_id=\\{c\\.get\\(\\\\\"id\\\\\",\\\\\"\\\\\"\\)\\[:20\\]\\} name=\\{c\\.get\\(\\\\\"name\\\\\"\\)\\}'\\)\n        except: pass\n\" \\| head -30$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^python3 -c \"\nimport json\ntarget_id = 'msg_01D1HQuCamEjxizC'\nwith open\\('/home/carles/\\.claude/projects/-home-carles-work-vsc-extension/56388eb7-946f-4e2b-b497-621d033a9977\\.jsonl'\\) as f:\n    for line in f:\n        line = line\\.strip\\(\\)\n        if not line: continue\n        try:\n            d = json\\.loads\\(line\\)\n            if d\\.get\\('type'\\) == 'assistant':\n                msg = d\\.get\\('message', \\{\\}\\)\n                if msg\\.get\\('id'\\) == target_id:\n                    content = msg\\.get\\('content', \\[\\]\\)\n                    tools = \\[\\(c\\.get\\('id',''\\)\\[:20\\], c\\.get\\('name'\\)\\) for c in content if isinstance\\(c,dict\\) and c\\.get\\('type'\\)=='tool_use'\\]\n                    print\\(f'stop=\\{msg\\.get\\(\\\\\"stop_reason\\\\\"\\)\\} tools=\\{tools\\}'\\)\n        except: pass\n\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^python3 << 'EOF'\nimport json\ntarget_id = 'msg_01D1HQuCamEjxizC'\nwith open\\('/home/carles/\\.claude/projects/-home-carles-work-vsc-extension/56388eb7-946f-4e2b-b497-621d033a9977\\.jsonl'\\) as f:\n    for line in f:\n        line = line\\.strip\\(\\)\n        if not line:\n            continue\n        try:\n            d = json\\.loads\\(line\\)\n            if d\\.get\\('type'\\) == 'assistant':\n                msg = d\\.get\\('message', \\{\\}\\)\n                if msg\\.get\\('id'\\) == target_id:\n                    content = msg\\.get\\('content', \\[\\]\\)\n                    tools = \\[\\(c\\.get\\('id',''\\)\\[:20\\], c\\.get\\('name'\\)\\) for c in content if isinstance\\(c,dict\\) and c\\.get\\('type'\\)=='tool_use'\\]\n                    print\\('stop=%s tools=%s' % \\(msg\\.get\\('stop_reason'\\), tools\\)\\)\n        except:\n            pass\nEOF$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}

@@ -225,17 +225,71 @@ function drawBookshelf(ctx: CanvasRenderingContext2D, gx: number, gy: number): v
 function drawDeskWithMonitor(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
   drawKenneyTile(ctx, TILES.deskSurface, gx, gy, SPRITE_TILE_SIZE);
   drawKenneyTile(ctx, TILES.deskFront, gx, gy + 1, SPRITE_TILE_SIZE);
-  // Monitor above desk surface (2.5D offset)
+
   const x = gx * SPRITE_TILE_SIZE;
   const y = gy * SPRITE_TILE_SIZE;
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(x + 2, y - 8, 12, 8);
-  ctx.fillStyle = '#0d3b6b';
-  ctx.fillRect(x + 3, y - 7, 10, 6);
-  ctx.fillStyle = 'rgba(64,196,255,0.35)';
-  ctx.fillRect(x + 3, y - 7, 10, 6);
-  ctx.fillStyle = '#333';
-  ctx.fillRect(x + 7, y, 2, 2);
+
+  // Monitor bezel
+  ctx.fillStyle = '#1c1c1c';
+  ctx.fillRect(x + 1, y - 14, 14, 13);
+  // Screen
+  ctx.fillStyle = '#071221';
+  ctx.fillRect(x + 2, y - 13, 12, 11);
+  // Code lines on screen
+  ctx.fillStyle = 'rgba(56,189,248,0.85)';
+  ctx.fillRect(x + 3, y - 12, 9, 1);
+  ctx.fillStyle = 'rgba(56,189,248,0.5)';
+  ctx.fillRect(x + 5, y - 10, 7, 1);
+  ctx.fillRect(x + 3, y - 8, 10, 1);
+  ctx.fillStyle = 'rgba(167,243,208,0.65)';
+  ctx.fillRect(x + 3, y - 6, 6, 1);
+  ctx.fillStyle = 'rgba(56,189,248,0.4)';
+  ctx.fillRect(x + 7, y - 4, 5, 1);
+  // Screen glow
+  ctx.fillStyle = 'rgba(56,189,248,0.06)';
+  ctx.fillRect(x + 2, y - 13, 12, 11);
+  // Monitor stand neck
+  ctx.fillStyle = '#3a3a3a';
+  ctx.fillRect(x + 6, y - 1, 3, 2);
+  // Monitor base
+  ctx.fillStyle = '#444';
+  ctx.fillRect(x + 4, y, 8, 2);
+  // Keyboard
+  ctx.fillStyle = '#9ca3af';
+  ctx.fillRect(x + 2, y + 3, 11, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  for (let col = 0; col < 4; col++) {
+    ctx.fillRect(x + 3 + col * 2, y + 4, 1, 1);
+    ctx.fillRect(x + 4 + col * 2, y + 6, 1, 1);
+  }
+  // Mouse
+  ctx.fillStyle = '#9ca3af';
+  ctx.fillRect(x + 14, y + 4, 3, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(x + 15, y + 4, 1, 2);
+}
+
+function drawPcTower(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  // Tower body
+  ctx.fillStyle = '#1f2937';
+  ctx.fillRect(x + 1, y + 3, 7, 12);
+  // Front panel
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(x + 2, y + 4, 5, 10);
+  // Power LED
+  ctx.fillStyle = '#4ade80';
+  ctx.beginPath();
+  ctx.arc(x + 4, y + 6, 1, 0, Math.PI * 2);
+  ctx.fill();
+  // Drive slot
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(x + 2, y + 9, 5, 1);
+  // USB ports
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(x + 2, y + 11, 2, 1);
+  ctx.fillRect(x + 2, y + 13, 2, 1);
 }
 
 function drawClock(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
@@ -336,11 +390,15 @@ function renderOfficeDecorations(ctx: CanvasRenderingContext2D, _width: number, 
   drawPlant(ctx, 14, 13, true);
   drawPlant(ctx, 7, 7);
 
-  // Desks with monitors (2 rows of 2)
+  // Desks with monitors (2 rows of 2) + PC towers
   drawDeskWithMonitor(ctx, 3, 4);
+  drawPcTower(ctx, 4, 5);
   drawDeskWithMonitor(ctx, 8, 4);
+  drawPcTower(ctx, 9, 5);
   drawDeskWithMonitor(ctx, 3, 10);
+  drawPcTower(ctx, 4, 11);
   drawDeskWithMonitor(ctx, 8, 10);
+  drawPcTower(ctx, 9, 11);
 
   // Decorative rugs (under the desk area)
   drawKenneyTile(ctx, TILES.rug, 6, 7, SPRITE_TILE_SIZE);
@@ -426,7 +484,38 @@ function renderFurniture(ctx: CanvasRenderingContext2D, furn: FurnitureInstance)
 }
 
 function renderSeat(ctx: CanvasRenderingContext2D, seat: Seat): void {
-  drawKenneyTile(ctx, TILES.chairOrange, seat.position.x, seat.position.y, SPRITE_TILE_SIZE);
+  drawOfficeChair(ctx, seat.position.x, seat.position.y);
+}
+
+function drawOfficeChair(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  // Chair back
+  ctx.fillStyle = '#1e3a5f';
+  ctx.fillRect(x + 4, y + 1, 8, 6);
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(x + 4, y + 1, 8, 2);
+  // Seat cushion
+  ctx.fillStyle = '#1e3a5f';
+  ctx.fillRect(x + 3, y + 6, 10, 6);
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(x + 3, y + 6, 10, 2);
+  // Armrests
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(x + 2, y + 6, 2, 4);
+  ctx.fillRect(x + 12, y + 6, 2, 4);
+  // Central column
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(x + 7, y + 12, 2, 2);
+  // Wheel base cross
+  ctx.fillStyle = '#4b5563';
+  ctx.fillRect(x + 4, y + 13, 8, 1);
+  ctx.fillRect(x + 7, y + 11, 2, 4);
+  // Wheels
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(x + 3, y + 14, 2, 2);
+  ctx.fillRect(x + 11, y + 14, 2, 2);
+  ctx.fillRect(x + 7, y + 14, 2, 2);
 }
 
 function renderCharacterShadow(ctx: CanvasRenderingContext2D, character: Character): void {
