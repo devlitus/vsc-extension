@@ -4,6 +4,7 @@ import { PixelAgentsViewProvider } from './PixelAgentsViewProvider';
 let providerInstance: PixelAgentsViewProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  console.log('[PixelAgents] Extension activating...');
   providerInstance = new PixelAgentsViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PixelAgentsViewProvider.viewType, providerInstance),

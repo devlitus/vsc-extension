@@ -40,6 +40,8 @@ export interface AgentState {
   currentTurnStartTime?: number;
   isInterrupted?: boolean;
   currentTurnAssistantContent: string;
+  agentRegistered?: boolean; // True once agentAdded has been emitted to the webview
+  pendingActivation?: boolean; // True when tracked silently — activate only on new data
 }
 
 export interface PersistedAgent {
@@ -88,6 +90,7 @@ export interface AssetManifest {
     name: string;
     uris: Record<string, string>;
   }>;
+  tilesetUri?: string;
 }
 
 export interface SettingsData {
