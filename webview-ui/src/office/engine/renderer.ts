@@ -3,6 +3,7 @@ import type { OfficeState } from './officeState';
 import { SPRITE_TILE_SIZE, get } from '../sprites';
 import { getWallTileRect, computeNeighborMask } from '../wallTiles';
 import { get as getSprite } from '../sprites/spriteCache';
+import { drawKenneyTile, TILES } from '../sprites/kenneySprites';
 
 export class Renderer {
   private wallTileRectCache: Map<string, { x: number; y: number; w: number; h: number }> = new Map();
@@ -18,7 +19,7 @@ export class Renderer {
     }
 
     // Clear canvas
-    ctx.fillStyle = '#1e1e1e';
+    ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
     // Set transform for zoom/pan
@@ -29,9 +30,50 @@ export class Renderer {
       for (let x = 0; x < tileMap.width; x++) {
         const tile = tileMap.get(x, y);
         if (tile === 'floor') {
-          ctx.fillStyle = '#3a3a3a';
-          ctx.fillRect(x * SPRITE_TILE_SIZE, y * SPRITE_TILE_SIZE, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          const px = x * SPRITE_TILE_SIZE;
+          const py = y * SPRITE_TILE_SIZE;
+          // Wood plank base
+          const shade = (x + y) % 2 === 0 ? '#c8964a' : '#b8864a';
+          ctx.fillStyle = shade;
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          // Plank lines
+          ctx.fillStyle = 'rgba(0,0,0,0.12)';
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, 1);
+          ctx.fillRect(px, py, 1, SPRITE_TILE_SIZE);
+          // Highlight
+          ctx.fillStyle = 'rgba(255,255,255,0.06)';
+          ctx.fillRect(px + 1, py + 1, SPRITE_TILE_SIZE - 2, 2);
+        } else if (tile === 'floor2') {
+          const px = x * SPRITE_TILE_SIZE;
+          const py = y * SPRITE_TILE_SIZE;
+          // Light ceramic tile (break room)
+          const shade = (x + y) % 2 === 0 ? '#ddd4c0' : '#cdc4b0';
+          ctx.fillStyle = shade;
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          // Grout lines
+          ctx.fillStyle = 'rgba(0,0,0,0.1)';
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, 1);
+          ctx.fillRect(px, py, 1, SPRITE_TILE_SIZE);
+          // Sheen
+          ctx.fillStyle = 'rgba(255,255,255,0.12)';
+          ctx.fillRect(px + 1, py + 1, SPRITE_TILE_SIZE - 2, 2);
+        } else if (tile === 'carpet') {
+          const px = x * SPRITE_TILE_SIZE;
+          const py = y * SPRITE_TILE_SIZE;
+          // Blue-grey carpet (conference room)
+          const shade = (x + y) % 2 === 0 ? '#3a6888' : '#346078';
+          ctx.fillStyle = shade;
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          // Carpet weave lines
+          ctx.fillStyle = 'rgba(255,255,255,0.06)';
+          ctx.fillRect(px, py + 4, SPRITE_TILE_SIZE, 1);
+          ctx.fillRect(px, py + 8, SPRITE_TILE_SIZE, 1);
+          ctx.fillRect(px, py + 12, SPRITE_TILE_SIZE, 1);
+          ctx.fillStyle = 'rgba(0,0,0,0.08)';
+          ctx.fillRect(px, py, 1, SPRITE_TILE_SIZE);
         } else if (tile === 'wall') {
+          const px = x * SPRITE_TILE_SIZE;
+          const py = y * SPRITE_TILE_SIZE;
           const mask = computeNeighborMask(tileMap, x, y);
           const cacheKey = `${x},${y},${mask}`;
           let rect = this.wallTileRectCache.get(cacheKey);
@@ -39,8 +81,18 @@ export class Renderer {
             rect = getWallTileRect('default', mask);
             this.wallTileRectCache.set(cacheKey, rect);
           }
-          ctx.fillStyle = '#5a5a5a';
-          ctx.fillRect(x * SPRITE_TILE_SIZE, y * SPRITE_TILE_SIZE, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          // Wall base
+          ctx.fillStyle = '#4a3f6b';
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+          // Wall bricks pattern
+          const brickRow = y % 2;
+          const brickOffset = brickRow === 0 ? 0 : SPRITE_TILE_SIZE / 2;
+          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, 1);
+          ctx.fillRect(px + brickOffset, py, 1, SPRITE_TILE_SIZE);
+          // Top highlight
+          ctx.fillStyle = 'rgba(255,255,255,0.1)';
+          ctx.fillRect(px, py, SPRITE_TILE_SIZE, 2);
         }
       }
     }
@@ -49,6 +101,9 @@ export class Renderer {
     for (const furn of layout.furniture ?? []) {
       renderFurniture(ctx, furn);
     }
+
+    // Render built-in office decorations
+    renderOfficeDecorations(ctx, layout.width, layout.height);
 
     // Render seats
     for (const seat of state.seats) {
@@ -72,15 +127,48 @@ export class Renderer {
       }
     }
 
-    // Render task assignment speech bubbles (bubbleText)
+    // Render tool name speech bubbles (bubbleText)
     for (const character of state.characters.values()) {
       if (character.bubbleText) {
-        const x = character.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
-        const y = character.position.y * SPRITE_TILE_SIZE - 10;
-        ctx.font = '10px sans-serif';
-        ctx.fillStyle = '#fff';
+        const cx = character.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+        const cy = character.position.y * SPRITE_TILE_SIZE - SPRITE_TILE_SIZE;
+        ctx.font = 'bold 8px monospace';
+        const textW = ctx.measureText(character.bubbleText).width;
+        const pad = 4;
+        const bw = textW + pad * 2;
+        const bh = 12;
+        const bx = cx - bw / 2;
+        const by = cy - bh;
+        // Bubble background
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bw, bh, 3);
+        ctx.fill();
+        // Bubble border
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bw, bh, 3);
+        ctx.stroke();
+        // Triangle pointer
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.moveTo(cx - 3, by + bh);
+        ctx.lineTo(cx + 3, by + bh);
+        ctx.lineTo(cx, by + bh + 4);
+        ctx.fill();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx - 3, by + bh);
+        ctx.lineTo(cx, by + bh + 4);
+        ctx.lineTo(cx + 3, by + bh);
+        ctx.stroke();
+        // Text
+        ctx.fillStyle = '#38bdf8';
         ctx.textAlign = 'center';
-        ctx.fillText(character.bubbleText, x, y);
+        ctx.fillText(character.bubbleText, cx, by + bh - 3);
+        ctx.textAlign = 'left';
       }
     }
 
@@ -111,71 +199,319 @@ export function render(ctx: CanvasRenderingContext2D, state: OfficeState): void 
   defaultRenderer.render(ctx, state);
 }
 
+// Palette of skin/hair combos for characters keyed by agent id
+const CHAR_PALETTES: Array<{ skin: string; hair: string; shirt: string; pants: string }> = [
+  { skin: '#f5cba7', hair: '#3b2314', shirt: '#e74c3c', pants: '#2c3e50' },
+  { skin: '#f5cba7', hair: '#c0a060', shirt: '#3498db', pants: '#34495e' },
+  { skin: '#c68642', hair: '#1a1a1a', shirt: '#9b59b6', pants: '#2c3e50' },
+  { skin: '#f5cba7', hair: '#e0e0e0', shirt: '#1abc9c', pants: '#2c3e50' },
+  { skin: '#8d5524', hair: '#1a1a1a', shirt: '#e67e22', pants: '#2c3e50' },
+];
+
+function getPalette(id: number) {
+  return CHAR_PALETTES[Math.abs(id) % CHAR_PALETTES.length];
+}
+
+function drawPlant(ctx: CanvasRenderingContext2D, gx: number, gy: number, alt = false): void {
+  drawKenneyTile(ctx, alt ? TILES.plantAlt : TILES.plant, gx, gy, SPRITE_TILE_SIZE);
+}
+
+function drawBookshelf(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  drawKenneyTile(ctx, TILES.cabinetTop, gx, gy, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.cabinetMid, gx, gy + 1, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.cabinetBot, gx, gy + 2, SPRITE_TILE_SIZE);
+}
+
+function drawDeskWithMonitor(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  drawKenneyTile(ctx, TILES.deskSurface, gx, gy, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.deskFront, gx, gy + 1, SPRITE_TILE_SIZE);
+  // Monitor above desk surface (2.5D offset)
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(x + 2, y - 8, 12, 8);
+  ctx.fillStyle = '#0d3b6b';
+  ctx.fillRect(x + 3, y - 7, 10, 6);
+  ctx.fillStyle = 'rgba(64,196,255,0.35)';
+  ctx.fillRect(x + 3, y - 7, 10, 6);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(x + 7, y, 2, 2);
+}
+
+function drawClock(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  const y = gy * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
+  const r = 5;
+  ctx.fillStyle = '#ecf0f1';
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 2, y - 3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 3, y - 2); ctx.stroke();
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath(); ctx.arc(x, y, 1, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawWaterCooler(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  ctx.fillStyle = '#95a5a6';
+  ctx.fillRect(x + 3, y + 8, 10, 8);
+  ctx.fillStyle = '#bdc3c7';
+  ctx.fillRect(x + 4, y + 2, 8, 8);
+  ctx.fillStyle = 'rgba(52,152,219,0.7)';
+  ctx.fillRect(x + 5, y + 1, 6, 5);
+  ctx.fillStyle = '#2980b9';
+  ctx.fillRect(x + 6, y, 4, 2);
+  ctx.fillStyle = '#3498db';
+  ctx.fillRect(x + 4, y + 11, 2, 2);
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(x + 10, y + 11, 2, 2);
+}
+
+function drawVendingMachine(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  // Body spans 2 tiles tall
+  ctx.fillStyle = '#2980b9';
+  ctx.fillRect(x + 1, y, 14, SPRITE_TILE_SIZE * 2);
+  // Display window
+  ctx.fillStyle = '#0d1b2a';
+  ctx.fillRect(x + 2, y + 2, 12, 10);
+  // Product slots
+  ctx.fillStyle = '#e74c3c';
+  ctx.fillRect(x + 3, y + 3, 4, 3);
+  ctx.fillStyle = '#f39c12';
+  ctx.fillRect(x + 9, y + 3, 4, 3);
+  ctx.fillStyle = '#27ae60';
+  ctx.fillRect(x + 3, y + 7, 4, 3);
+  ctx.fillStyle = '#8e44ad';
+  ctx.fillRect(x + 9, y + 7, 4, 3);
+  // Coin slot + button (second tile)
+  ctx.fillStyle = '#bdc3c7';
+  ctx.fillRect(x + 3, y + SPRITE_TILE_SIZE + 4, 5, 1);
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath(); ctx.arc(x + 12, y + SPRITE_TILE_SIZE + 5, 2, 0, Math.PI * 2); ctx.fill();
+  // Left highlight strip
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillRect(x + 1, y, 3, SPRITE_TILE_SIZE * 2);
+}
+
+function drawPainting(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+  // Frame
+  ctx.fillStyle = '#7d5a2f';
+  ctx.fillRect(x + 2, y + 2, 12, 9);
+  // Sky
+  ctx.fillStyle = '#87ceeb';
+  ctx.fillRect(x + 4, y + 4, 8, 5);
+  // Ground
+  ctx.fillStyle = '#4a8c3f';
+  ctx.fillRect(x + 4, y + 7, 8, 2);
+  // Sun
+  ctx.fillStyle = '#f9d71c';
+  ctx.beginPath(); ctx.arc(x + 10, y + 5, 2, 0, Math.PI * 2); ctx.fill();
+  // Frame highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillRect(x + 2, y + 2, 2, 9);
+}
+
+function renderOfficeDecorations(ctx: CanvasRenderingContext2D, _width: number, _height: number): void {
+  // ── MAIN OFFICE ─────────────────────────────────────────────
+  // Bookshelves against top wall
+  drawBookshelf(ctx, 2, 1);
+  drawBookshelf(ctx, 5, 1);
+  drawBookshelf(ctx, 10, 1);
+  drawBookshelf(ctx, 13, 1);
+
+  // Clock between bookshelves
+  drawClock(ctx, 8, 1);
+
+  // Corner plants
+  drawPlant(ctx, 1, 1);
+  drawPlant(ctx, 14, 1, true);
+  drawPlant(ctx, 1, 13);
+  drawPlant(ctx, 14, 13, true);
+  drawPlant(ctx, 7, 7);
+
+  // Desks with monitors (2 rows of 2)
+  drawDeskWithMonitor(ctx, 3, 4);
+  drawDeskWithMonitor(ctx, 8, 4);
+  drawDeskWithMonitor(ctx, 3, 10);
+  drawDeskWithMonitor(ctx, 8, 10);
+
+  // Decorative rugs (under the desk area)
+  drawKenneyTile(ctx, TILES.rug, 6, 7, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.rug, 7, 7, SPRITE_TILE_SIZE);
+
+  // Water cooler near divider wall
+  drawWaterCooler(ctx, 13, 8);
+
+  // ── BREAK ROOM (top-right) ───────────────────────────────────
+  drawPlant(ctx, 16, 1);
+  drawPlant(ctx, 22, 6, true);
+
+  // Vending machine against back wall
+  drawVendingMachine(ctx, 21, 1);
+
+  // Water cooler
+  drawWaterCooler(ctx, 17, 1);
+
+  // Break table + chairs
+  drawKenneyTile(ctx, TILES.tableTopLeft, 19, 3, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableTopRight, 20, 3, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidLeft, 19, 4, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidRight, 20, 4, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairWhite, 19, 2, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairWhite, 20, 2, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairWhite, 19, 5, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairWhite, 20, 5, SPRITE_TILE_SIZE);
+
+  // ── CONFERENCE ROOM (bottom-right) ──────────────────────────
+  drawPlant(ctx, 16, 9);
+  drawPlant(ctx, 22, 9, true);
+  drawPlant(ctx, 16, 14);
+  drawPlant(ctx, 22, 14, true);
+
+  // Painting on back wall
+  drawPainting(ctx, 18, 9);
+  drawPainting(ctx, 20, 9);
+
+  // Rug under table (draw first so table appears on top)
+  drawKenneyTile(ctx, TILES.rug, 18, 11, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.rug, 19, 11, SPRITE_TILE_SIZE);
+
+  // Conference table (4 wide × 2 tall)
+  drawKenneyTile(ctx, TILES.tableTopLeft, 17, 11, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableTopMid, 18, 11, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableTopMid, 19, 11, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableTopRight, 20, 11, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidLeft, 17, 12, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidMid, 18, 12, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidMid, 19, 12, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.tableMidRight, 20, 12, SPRITE_TILE_SIZE);
+
+  // Chairs around conference table
+  drawKenneyTile(ctx, TILES.chairOrangeAlt, 17, 10, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrangeAlt, 18, 10, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrangeAlt, 19, 10, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrangeAlt, 20, 10, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrange, 17, 13, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrange, 18, 13, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrange, 19, 13, SPRITE_TILE_SIZE);
+  drawKenneyTile(ctx, TILES.chairOrange, 20, 13, SPRITE_TILE_SIZE);
+}
+
 function renderFurniture(ctx: CanvasRenderingContext2D, furn: FurnitureInstance): void {
   const x = furn.position.x * SPRITE_TILE_SIZE;
   const y = furn.position.y * SPRITE_TILE_SIZE;
-  
-  ctx.fillStyle = '#7a7a7a';
-  ctx.fillRect(x, y, SPRITE_TILE_SIZE * 2, SPRITE_TILE_SIZE);
+  const w = SPRITE_TILE_SIZE * 2;
+  const h = SPRITE_TILE_SIZE;
+
+  // Desk - brown wooden surface
+  ctx.fillStyle = '#8B6914';
+  ctx.fillRect(x, y, w, h);
+  // Desk top highlight
+  ctx.fillStyle = '#A0801E';
+  ctx.fillRect(x, y, w, 3);
+  // Monitor on desk
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(x + 4, y - 8, 10, 7);
+  ctx.fillStyle = '#1a252f';
+  ctx.fillRect(x + 5, y - 7, 8, 5);
+  ctx.fillStyle = '#34495e';
+  ctx.fillRect(x + 8, y - 1, 2, 2);
 }
 
 function renderSeat(ctx: CanvasRenderingContext2D, seat: Seat): void {
-  const x = seat.position.x * SPRITE_TILE_SIZE;
-  const y = seat.position.y * SPRITE_TILE_SIZE;
-  
-  ctx.fillStyle = '#4a6a8a';
-  ctx.beginPath();
-  ctx.arc(x + SPRITE_TILE_SIZE / 2, y + SPRITE_TILE_SIZE / 2, SPRITE_TILE_SIZE / 3, 0, Math.PI * 2);
-  ctx.fill();
+  drawKenneyTile(ctx, TILES.chairOrange, seat.position.x, seat.position.y, SPRITE_TILE_SIZE);
 }
 
 function renderCharacterShadow(ctx: CanvasRenderingContext2D, character: Character): void {
   const x = character.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
-  const y = character.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE - 2;
-  
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  const y = character.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE - 1;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
   ctx.beginPath();
-  ctx.ellipse(x, y, SPRITE_TILE_SIZE / 2, SPRITE_TILE_SIZE / 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, 6, 3, 0, 0, Math.PI * 2);
   ctx.fill();
 }
 
 function renderCharacter(ctx: CanvasRenderingContext2D, character: Character): void {
   const x = character.position.x * SPRITE_TILE_SIZE;
-  const y = character.position.y * SPRITE_TILE_SIZE;
+  const y = character.position.y * SPRITE_TILE_SIZE - 6;
+  const pal = getPalette(character.id);
 
-  // Determine sprite URL based on character state and facing direction
-  const spriteUrl = `/sprites/characters/${character.state}-${character.facingDir}.png`;
-  const sprite = getSprite(spriteUrl, character.palette);
+  // Body / shirt
+  ctx.fillStyle = pal.shirt;
+  ctx.fillRect(x + 4, y + 8, 8, 7);
 
-  if (sprite) {
-    ctx.drawImage(
-      sprite,
-      x, // x offset (center)
-      y - 8, // y offset (bottom anchor)
-      SPRITE_TILE_SIZE, // width
-      SPRITE_TILE_SIZE  // height
-    );
+  // Pants
+  ctx.fillStyle = pal.pants;
+  ctx.fillRect(x + 4, y + 14, 3, 5);
+  ctx.fillRect(x + 9, y + 14, 3, 5);
+
+  // Head
+  ctx.fillStyle = pal.skin;
+  ctx.fillRect(x + 4, y + 1, 8, 7);
+
+  // Hair
+  ctx.fillStyle = pal.hair;
+  ctx.fillRect(x + 4, y + 1, 8, 3);
+  ctx.fillRect(x + 4, y + 4, 1, 2);
+  ctx.fillRect(x + 11, y + 4, 1, 2);
+
+  // Eyes
+  ctx.fillStyle = '#1a1a1a';
+  if (character.facingDir === 'left') {
+    ctx.fillRect(x + 5, y + 5, 2, 2);
+  } else if (character.facingDir === 'right') {
+    ctx.fillRect(x + 9, y + 5, 2, 2);
   } else {
-    // Fallback to colored rectangle if sprite not loaded
-    const colors: Record<string, string> = {
-      idle: '#6a6',
-      walk: '#6a6',
-      type: '#aa6',
-      read: '#66a',
-      waiting: '#a66',
-    };
-
-    ctx.fillStyle = colors[character.state] ?? '#6a6';
-    ctx.fillRect(x, y, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
-
-    // Draw facing direction indicator
-    ctx.fillStyle = '#fff';
-    const eyeX = x + SPRITE_TILE_SIZE / 2;
-    const eyeY = y + SPRITE_TILE_SIZE / 3;
-    ctx.beginPath();
-    ctx.arc(eyeX, eyeY, 2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillRect(x + 5, y + 5, 2, 2);
+    ctx.fillRect(x + 9, y + 5, 2, 2);
   }
+
+  // Arms
+  ctx.fillStyle = pal.skin;
+  if (character.state === 'type') {
+    // Arms forward for typing
+    ctx.fillRect(x + 2, y + 9, 2, 5);
+    ctx.fillRect(x + 12, y + 9, 2, 5);
+    // Animate fingers
+    ctx.fillStyle = pal.skin;
+    ctx.fillRect(x + 1, y + 13, 2, 2);
+    ctx.fillRect(x + 13, y + 13, 2, 2);
+  } else if (character.state === 'read') {
+    // Arms up holding book
+    ctx.fillRect(x + 2, y + 8, 2, 4);
+    ctx.fillRect(x + 12, y + 8, 2, 4);
+    // Book
+    ctx.fillStyle = '#e8d5a3';
+    ctx.fillRect(x + 3, y + 4, 10, 7);
+    ctx.fillStyle = '#c4a35a';
+    ctx.fillRect(x + 7, y + 4, 1, 7);
+  } else if (character.state === 'waiting') {
+    // One arm up
+    ctx.fillRect(x + 2, y + 9, 2, 4);
+    ctx.fillRect(x + 2, y + 7, 2, 3);
+    ctx.fillRect(x + 12, y + 9, 2, 6);
+  } else {
+    // Idle / walk
+    ctx.fillRect(x + 2, y + 9, 2, 6);
+    ctx.fillRect(x + 12, y + 9, 2, 6);
+  }
+
+  // Agent ID label below
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(x + 1, y + 20, 14, 6);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '4px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`#${character.id}`, x + 8, y + 25);
+  ctx.textAlign = 'left';
 
   // Render context bar if contextMax is defined and contextUsed is set
   if (character.contextMax !== undefined && character.contextMax > 0 && character.contextUsed !== undefined) {
@@ -275,32 +611,37 @@ function renderBubble(ctx: CanvasRenderingContext2D, character: Character): void
 }
 
 function renderSubagent(ctx: CanvasRenderingContext2D, subagent: SubagentCharacter): void {
-  const x = subagent.position.x * SPRITE_TILE_SIZE;
-  const y = subagent.position.y * SPRITE_TILE_SIZE;
-  const scale = 0.75;
-  const scaledSize = SPRITE_TILE_SIZE * scale;
-  const offset = (SPRITE_TILE_SIZE - scaledSize) / 2;
-  
-  // Render at 0.75x scale
-  ctx.fillStyle = '#88aacc';
-  ctx.fillRect(x + offset, y + offset, scaledSize, scaledSize);
-  
-  // Subagent indicator
-  ctx.fillStyle = '#ffffff';
+  const x = subagent.position.x * SPRITE_TILE_SIZE + 3;
+  const y = subagent.position.y * SPRITE_TILE_SIZE - 2;
+  const pal = getPalette(subagent.agentId);
+
+  // Mini character at 0.6x scale
+  ctx.fillStyle = pal.skin;
+  ctx.fillRect(x + 3, y + 1, 5, 4);
+  ctx.fillStyle = pal.hair;
+  ctx.fillRect(x + 3, y + 1, 5, 2);
+  ctx.fillStyle = pal.shirt;
+  ctx.fillRect(x + 3, y + 5, 5, 4);
+  ctx.fillStyle = pal.pants;
+  ctx.fillRect(x + 3, y + 9, 2, 3);
+  ctx.fillRect(x + 6, y + 9, 2, 3);
+
+  // Sub indicator dot
+  ctx.fillStyle = '#88ccff';
   ctx.beginPath();
-  ctx.arc(x + SPRITE_TILE_SIZE / 2, y + SPRITE_TILE_SIZE / 3, 2, 0, Math.PI * 2);
+  ctx.arc(x + 5, y - 2, 2, 0, Math.PI * 2);
   ctx.fill();
 }
 
 function renderSubagentLink(ctx: CanvasRenderingContext2D, subagent: SubagentCharacter, state: OfficeState): void {
   const parent = state.characters.get(subagent.linkedToParentId);
   if (!parent) return;
-  
+
   const subX = subagent.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
   const subY = subagent.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
   const parentX = parent.position.x * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
   const parentY = parent.position.y * SPRITE_TILE_SIZE + SPRITE_TILE_SIZE / 2;
-  
+
   ctx.strokeStyle = '#666666';
   ctx.setLineDash([4, 4]);
   ctx.lineWidth = 1;

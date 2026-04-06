@@ -20,11 +20,22 @@ export function updateCharacters(state: OfficeState, deltaMs: number): void {
       if (dist < 0.05) {
         character.position = { ...target };
         character.targetPath.shift();
-        
+
         if (character.targetPath.length === 0) {
-          character.state = 'idle';
-          // Orient toward desk (default down)
-          character.facingDir = 'down';
+          // Apply scheduled facing direction
+          if (character.targetFacingDir) {
+            character.facingDir = character.targetFacingDir;
+            character.targetFacingDir = undefined;
+          } else {
+            character.facingDir = 'up'; // default: face toward desk/monitor
+          }
+          // Apply pending state (e.g. 'type' or 'read' after rushing home)
+          if (character.pendingState) {
+            character.state = character.pendingState;
+            character.pendingState = undefined;
+          } else {
+            character.state = 'idle';
+          }
         }
       } else {
         const move = WALK_SPEED * deltaSec;
@@ -62,17 +73,22 @@ export function bfsPath(
   tileMap: TileMap,
   from: Position,
   to: Position,
-  obstacles: Position[] = []
+  obstacles: Position[] = [],
+  otherCharacters: Character[] = []
 ): Position[] {
   if (from.x === to.x && from.y === to.y) return [];
-  
+
   const queue: Array<{ pos: Position; path: Position[] }> = [];
   const visited = new Set<string>();
-  
+
   // Build obstacle set for O(1) lookup
   const obstacleSet = new Set<string>();
   for (const obs of obstacles) {
     obstacleSet.add(`${obs.x},${obs.y}`);
+  }
+  // Add other characters as dynamic obstacles
+  for (const char of otherCharacters) {
+    obstacleSet.add(`${char.position.x},${char.position.y}`);
   }
   
   queue.push({ pos: { ...from }, path: [] });

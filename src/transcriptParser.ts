@@ -175,6 +175,17 @@ function finalizeTurn(agentState: AgentState): void {
   agentState.currentTurnStartTime = undefined;
 }
 
+export function deriveStatusFromToolInput(toolName: string, input: Record<string, unknown>): string {
+  if (!input || typeof input !== 'object') return '';
+  if (toolName === 'Bash') return typeof input.command === 'string' ? input.command : '';
+  if (['Read', 'Write', 'Edit', 'Create'].includes(toolName)) {
+    return typeof input.file_path === 'string' ? input.file_path : '';
+  }
+  if (toolName === 'WebFetch') return typeof input.url === 'string' ? input.url : '';
+  if (toolName === 'WebSearch') return typeof input.query === 'string' ? input.query : '';
+  return '';
+}
+
 export function processTranscriptLine(
   line: string,
   agentState: AgentState,
@@ -193,7 +204,7 @@ export function processTranscriptLine(
 
     const record = deepCloneWithProtection(parsed);
 
-    if (POLL_PROTOTYPE_KEYS.some(key => key in record)) {
+    if (POLL_PROTOTYPE_KEYS.some(key => Object.prototype.hasOwnProperty.call(record, key))) {
       return;
     }
 
@@ -202,6 +213,8 @@ export function processTranscriptLine(
     if (typeof type !== 'string') {
       return;
     }
+
+    console.log(`[PixelAgents] parse: agent=${agentState.id} type=${type}`);
 
     switch (type) {
       case 'start': {
@@ -341,16 +354,17 @@ export function processTranscriptLine(
           agentState.systemPrompt = (record.system_prompt as string) ?? (record.prompt as string) ?? undefined;
         }
 
+        // Old format: turn_duration field with token counts
         if (record.turn_duration) {
           const duration = record.turn_duration as Record<string, number>;
           const inputTokens = duration.input_tokens ?? 0;
           const cacheReadTokens = duration.cache_read_input_tokens ?? 0;
           const contextWindow = duration.context_window ?? 0;
-          
+
           if (contextWindow > 0) {
             agentState.contextUsed = inputTokens + cacheReadTokens;
             agentState.contextMax = contextWindow;
-            
+
             const msg: WebviewMessage = {
               type: 'contextUpdate',
               agentId: agentState.id,
@@ -361,6 +375,22 @@ export function processTranscriptLine(
               onUpdate(msg);
             }
           }
+        }
+
+        // New format (v2.x): stop_hook_summary marks end of a conversation turn
+        if (record.subtype === 'stop_hook_summary') {
+          finalizeTurn(agentState);
+          if (!agentState.hookDelivered) {
+            const msg: WebviewMessage = {
+              type: 'turnEnd',
+              agentId: agentState.id,
+            };
+            if (isWebviewMessage(msg)) {
+              onUpdate(msg);
+            }
+          }
+          agentState.hookDelivered = false;
+          agentState.hadToolsInTurn = false;
         }
         break;
       }
@@ -377,6 +407,159 @@ export function processTranscriptLine(
         }
         break;
       }
+
+      // --- New-format JSONL handlers (Claude Code v2.x) ---
+
+      case 'permission-mode': {
+        // First line of every new session — use as agent registration event
+        if (typeof record.sessionId === 'string') {
+          agentState.sessionId = record.sessionId;
+        }
+        if (!agentState.agentRegistered) {
+          agentState.agentRegistered = true;
+          console.log(`[PixelAgents] permission-mode → agentAdded id=${agentState.id} session=${agentState.sessionId}`);
+          const msg: WebviewMessage = {
+            type: 'agentAdded',
+            agentId: agentState.id,
+            sessionId: agentState.sessionId,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+        break;
+      }
+
+      case 'user': {
+        // New format (Claude Code CLI v2+): Register agent on first user record.
+        // Some sessions (e.g. after /clear or resumed sessions) do NOT start with a
+        // 'permission-mode' line, so permissionMode is absent from user records too.
+        // We still need to emit agentAdded so the character appears in the webview.
+        if (!agentState.agentRegistered) {
+          agentState.agentRegistered = true;
+          if (typeof record.sessionId === 'string') {
+            agentState.sessionId = record.sessionId;
+          }
+          console.log(`[PixelAgents] user → agentAdded id=${agentState.id} session=${agentState.sessionId}`);
+          const msg: WebviewMessage = {
+            type: 'agentAdded',
+            agentId: agentState.id,
+            sessionId: agentState.sessionId,
+          };
+          if (isWebviewMessage(msg)) {
+            onUpdate(msg);
+          }
+        }
+
+        const userMsg = record.message as Record<string, unknown> | undefined;
+        const content = userMsg?.content;
+
+        if (typeof content === 'string' && typeof record.promptId === 'string' && record.promptId) {
+          // New human-turn start — reset state like old 'turn' action:'start'
+          agentState.hookDelivered = false;
+          agentState.toolsThisTurn = [];
+          agentState.currentTurnStartTime = Date.now();
+          agentState.currentTurnAssistantContent = '';
+        } else if (Array.isArray(content)) {
+          // Tool results — emit toolEnd for each completed tool
+          for (const item of content) {
+            if (
+              typeof item === 'object' && item !== null &&
+              (item as Record<string, unknown>).type === 'tool_result'
+            ) {
+              const toolUseId = (item as Record<string, unknown>).tool_use_id;
+              const toolId = typeof toolUseId === 'string' ? toolUseId : '';
+              agentState.activeToolIds.delete(toolId);
+              agentState.activeToolStatuses.delete(toolId);
+              agentState.activeToolNames.delete(toolId);
+
+              const msg: WebviewMessage = { type: 'toolEnd', agentId: agentState.id };
+              if (isWebviewMessage(msg)) {
+                onUpdate(msg);
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'assistant': {
+        const assistantMsg = record.message as Record<string, unknown> | undefined;
+        if (!assistantMsg) {
+          break;
+        }
+
+        const msgContent = assistantMsg.content;
+        if (Array.isArray(msgContent)) {
+          for (const item of msgContent) {
+            if (
+              typeof item === 'object' && item !== null &&
+              (item as Record<string, unknown>).type === 'tool_use'
+            ) {
+              const toolEntry = item as Record<string, unknown>;
+              const toolId = typeof toolEntry.id === 'string' ? toolEntry.id : '';
+              const toolName = typeof toolEntry.name === 'string' ? toolEntry.name : '';
+              const toolInput = toolEntry.input as Record<string, unknown> | undefined ?? {};
+
+              // Dedup: only emit toolStart for tool_ids we haven't seen yet
+              console.log(`[PixelAgents] assistant tool_use: id=${toolId} name=${toolName} registered=${agentState.agentRegistered}`);
+              if (toolId && !agentState.activeToolIds.has(toolId)) {
+                agentState.activeToolIds.add(toolId);
+                agentState.activeToolNames.set(toolId, toolName);
+
+                const rawStatus = deriveStatusFromToolInput(toolName, toolInput);
+                const status = formatToolStatus(toolName, rawStatus);
+                agentState.activeToolStatuses.set(toolId, status);
+                agentState.hadToolsInTurn = true;
+
+                // Track tools for inspection panel
+                const existingTool = agentState.toolsThisTurn.find(t => t.name === toolName);
+                if (existingTool) {
+                  existingTool.count++;
+                } else {
+                  agentState.toolsThisTurn.push({ name: toolName, count: 1 });
+                }
+
+                const msg: WebviewMessage = {
+                  type: 'toolStart',
+                  agentId: agentState.id,
+                  toolName,
+                  status,
+                };
+                if (isWebviewMessage(msg)) {
+                  onUpdate(msg);
+                }
+              }
+            }
+          }
+        }
+
+        // Extract context usage from the final assistant message
+        const usage = assistantMsg.usage as Record<string, unknown> | undefined;
+        if (usage && typeof usage === 'object') {
+          const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+          const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
+          const total = inputTokens + cacheRead;
+          if (total > 0) {
+            agentState.contextUsed = total;
+            if (agentState.contextMax === undefined) {
+              agentState.contextMax = 200000; // Default for Claude Sonnet/Opus context window
+            }
+            const msg: WebviewMessage = {
+              type: 'contextUpdate',
+              agentId: agentState.id,
+              contextUsed: agentState.contextUsed,
+              contextMax: agentState.contextMax,
+            };
+            if (isWebviewMessage(msg)) {
+              onUpdate(msg);
+            }
+          }
+        }
+        break;
+      }
+
+      // --- End new-format handlers ---
 
       default:
         if (!agentState.seenUnknownRecordTypes.has(type)) {

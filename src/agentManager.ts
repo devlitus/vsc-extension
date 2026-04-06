@@ -76,6 +76,17 @@ export class AgentManager {
     return agent;
   }
 
+  updateSessionId(agentId: number, newSessionId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    if (agent.sessionId === newSessionId) return;
+    if (this.agentsBySessionId.get(agent.sessionId) === agent) {
+      this.agentsBySessionId.delete(agent.sessionId);
+    }
+    agent.sessionId = newSessionId;
+    this.agentsBySessionId.set(newSessionId, agent);
+  }
+
   getAgent(id: number): AgentState | undefined {
     return this.agents.get(id);
   }

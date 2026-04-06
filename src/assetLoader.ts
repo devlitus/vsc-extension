@@ -132,6 +132,11 @@ export function getAssetUris(
     })),
   };
 
+  const tilesetUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(context.extensionUri, 'media', 'kenney_tileset.png')
+  );
+  manifest.tilesetUri = tilesetUri.toString();
+
   const baseUri = vscode.Uri.joinPath(context.extensionUri, 'assets');
 
   for (const pack of manifest.furniturePacks) {

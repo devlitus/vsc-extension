@@ -35,7 +35,7 @@ export class FileWatcher {
   constructor(
     private readonly agentManager: AgentManager,
     private readonly onAgentUpdate: AgentUpdateCallback
-  ) {}
+  ) { }
 
   async setWatchAllSessions(enabled: boolean): Promise<void> {
     this._watchAllSessions = enabled;
@@ -52,11 +52,6 @@ export class FileWatcher {
       return;
     }
 
-    // Performance: Use async polling to avoid blocking the event loop
-    this.pollingInterval = setInterval(async () => {
-      await this.poll();
-    }, POLL_INTERVAL_MS);
-
     this._disposables.push(
       vscode.window.onDidOpenTerminal(this.onDidOpenTerminal, this)
     );
@@ -64,12 +59,15 @@ export class FileWatcher {
       vscode.window.onDidCloseTerminal(this.onDidCloseTerminal, this)
     );
 
-    const terminals = vscode.window.terminals;
-    for (const terminal of terminals) {
-      if (terminal.name === 'claude') {
-        this.associateTerminal(terminal);
-      }
-    }
+    const existingClaudeTerminals = [...vscode.window.terminals].filter(t => t.name === 'claude');
+    const associations = existingClaudeTerminals.map(t => this.associateTerminal(t).catch(() => { }));
+
+    // Start polling only after all terminal associations complete to avoid race conditions
+    Promise.all(associations).finally(() => {
+      this.pollingInterval = setInterval(async () => {
+        await this.poll();
+      }, POLL_INTERVAL_MS);
+    });
   }
 
   stop(): void {
@@ -109,16 +107,10 @@ export class FileWatcher {
         }
 
         try {
-          const projectEntries = await fs.promises.readdir(projectDir, { withFileTypes: true });
-          for (const projectEntry of projectEntries) {
-            if (!projectEntry.isFile() || !projectEntry.name.endsWith('.jsonl')) {
-              continue;
-            }
-            const jsonlFile = path.join(projectDir, projectEntry.name);
-            if (!this.knownExternalFiles.has(jsonlFile)) {
-              this.knownExternalFiles.add(jsonlFile);
-              this.processProjectDir(projectDir, jsonlFile);
-            }
+          const jsonlFile = await this.newestJsonlInDir(projectDir);
+          if (jsonlFile && !this.knownExternalFiles.has(jsonlFile)) {
+            this.knownExternalFiles.add(jsonlFile);
+            this.processProjectDir(projectDir, jsonlFile);
           }
         } catch (err) {
           if (err instanceof Error) {
@@ -170,8 +162,10 @@ export class FileWatcher {
         await fs.promises.access(agent.jsonlFile);
       } catch {
         // File doesn't exist, remove agent
-        this.agentManager.removeAgent(agent.id);
+        const agentId = agent.id;
+        this.agentManager.removeAgent(agentId);
         this.knownExternalFiles.delete(agent.jsonlFile);
+        this.onAgentUpdate({ type: 'agentRemoved', agentId });
       }
     }
   }
@@ -196,12 +190,8 @@ export class FileWatcher {
         }
 
         try {
-          const projectEntries = await fs.promises.readdir(projectDir, { withFileTypes: true });
-          for (const projectEntry of projectEntries) {
-            if (!projectEntry.isFile() || !projectEntry.name.endsWith('.jsonl')) {
-              continue;
-            }
-            const jsonlFile = path.join(projectDir, projectEntry.name);
+          const jsonlFile = await this.newestJsonlInDir(projectDir);
+          if (jsonlFile) {
             this.processProjectDir(projectDir, jsonlFile);
           }
         } catch (err) {
@@ -230,6 +220,25 @@ export class FileWatcher {
     }
   }
 
+  /** Returns the path of the most recently modified .jsonl file in a project dir, or null. */
+  private async newestJsonlInDir(projectDir: string): Promise<string | null> {
+    let newest: { file: string; mtime: number } | null = null;
+    try {
+      const entries = await fs.promises.readdir(projectDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+        const filePath = path.join(projectDir, entry.name);
+        try {
+          const stat = await fs.promises.stat(filePath);
+          if (!newest || stat.mtimeMs > newest.mtime) {
+            newest = { file: filePath, mtime: stat.mtimeMs };
+          }
+        } catch { /* skip unreadable */ }
+      }
+    } catch { /* skip unreadable dir */ }
+    return newest?.file ?? null;
+  }
+
   private isSafeProjectDir(projectDir: string): boolean {
     try {
       if (!isSafePath(projectDir)) {
@@ -244,28 +253,42 @@ export class FileWatcher {
 
   private async processProjectDir(projectDir: string, sessionsFile: string): Promise<void> {
     const agents = this.agentManager.getAllAgents();
-    let agent = agents.find(a => a.projectDir === projectDir);
-
-    if (!agent && this._watchAllSessions) {
-      // Only create external agents when watchAllSessions is enabled
-      // and we haven't already created one for this file
-      if (!this.knownExternalFiles.has(sessionsFile)) {
-        agent = this.agentManager.createAgent(
-          '',
-          projectDir,
-          sessionsFile
-        );
-        agent.isExternal = true;
-        this.knownExternalFiles.add(sessionsFile);
-      } else {
-        // File was already processed as external, skip
-        return;
-      }
-    }
+    let agent = agents.find(a => a.jsonlFile === sessionsFile);
 
     if (!agent) {
-      // No agent associated with this project dir
-      return;
+      // Only adopt new files that were recently modified (within 2 hours).
+      // This prevents stale historical JSONL files from spawning ghost agents.
+      // Terminal-attached agents are always adopted regardless of mtime.
+      const ACTIVE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+      try {
+        const stat = await fs.promises.stat(sessionsFile);
+        if (Date.now() - stat.mtimeMs > ACTIVE_THRESHOLD_MS) {
+          return; // Skip stale file
+        }
+      } catch {
+        return;
+      }
+
+      // Create fresh agent (file either new or previously orphaned after agent removal)
+      this.knownExternalFiles.delete(sessionsFile);
+      agent = this.agentManager.createAgent(
+        '',
+        projectDir,
+        sessionsFile
+      );
+      // For existing files, start reading from the END so we only react to future data.
+      // Historical JSONL lines are irrelevant — we already emit agentAdded directly above.
+      try {
+        const stat = await fs.promises.stat(sessionsFile);
+        agent.fileOffset = stat.size;
+      } catch {
+        agent.fileOffset = 0;
+      }
+      agent.isExternal = !this._watchAllSessions;
+      agent.agentRegistered = true; // Prevent duplicate agentAdded from transcriptParser
+      agent.pendingActivation = true; // Wait for new data before showing in webview
+      this.knownExternalFiles.add(sessionsFile);
+      console.log(`[PixelAgents] New JSONL found → tracking silently id=${agent.id} file=${path.basename(sessionsFile)}`);
     }
 
     try {
@@ -288,6 +311,14 @@ export class FileWatcher {
         return;
       }
 
+      // First new data after discovery — activate the agent now
+      if (agent.pendingActivation) {
+        agent.pendingActivation = false;
+        console.log(`[PixelAgents] Session active → agentAdded id=${agent.id} file=${path.basename(agent.jsonlFile)}`);
+        this.onAgentUpdate({ type: 'agentAdded', agentId: agent.id, sessionId: agent.sessionId });
+      }
+
+      console.log(`[PixelAgents] readNewLines: agent=${agent.id} offset=${agent.fileOffset} fileSize=${fileSize} delta=${fileSize - agent.fileOffset}`);
       const bytesToRead = Math.min(READ_CHUNK_BYTES, fileSize - agent.fileOffset);
       const buffer = Buffer.alloc(bytesToRead);
       const { bytesRead } = await fileHandle.read(buffer, 0, bytesToRead, agent.fileOffset);
@@ -297,20 +328,27 @@ export class FileWatcher {
       }
 
       const text = buffer.toString('utf-8', 0, bytesRead);
-      // Performance: Use array-based string accumulation to avoid memory churn
-      agent.lineChunks.push(text);
+      // Prepend any incomplete line fragment from the previous read
+      const fullText = agent.lineBuffer + text;
+      agent.lineBuffer = '';
       agent.fileOffset += bytesRead;
 
-      // Join chunks and process lines
-      const lineBuffer = agent.lineChunks.join('');
-      const lines = lineBuffer.split('\n');
-      agent.lineBuffer = lines.pop() || '';
+      const lines = fullText.split('\n');
+      // The last element is either empty or an incomplete line fragment
+      agent.lineBuffer = lines.pop() ?? '';
+
+      console.log(`[PixelAgents] lines to process: ${lines.length}, lineBuffer length: ${agent.lineBuffer.length}`);
 
       for (const line of lines) {
+        console.log(`[PixelAgents] calling processTranscriptLine len=${line.length} preview=${line.substring(0, 60)}`);
+        const prevSessionId = agent.sessionId;
         processTranscriptLine(line, agent, this.onAgentUpdate);
+        if (agent.sessionId !== prevSessionId) {
+          this.agentManager.updateSessionId(agent.id, agent.sessionId);
+        }
       }
 
-      // Clear chunks after processing (lineBuffer holds the incomplete line)
+      // lineChunks not used in this path; ensure clean state
       agent.lineChunks = [];
     } catch (err) {
       if (err instanceof Error) {
@@ -330,7 +368,7 @@ export class FileWatcher {
   private onDidOpenTerminal(terminal: vscode.Terminal): void {
     if (terminal.name === 'claude') {
       // Fire and forget - we don't want to block the event handler
-      this.associateTerminal(terminal).catch(() => {});
+      this.associateTerminal(terminal).catch(() => { });
     }
   }
 
@@ -380,6 +418,9 @@ export class FileWatcher {
           agent.fileOffset = 0;
           agent.lineBuffer = '';
           agent.lineChunks = [];
+          agent.agentRegistered = true; // Prevent duplicate agentAdded from transcriptParser
+          console.log(`[PixelAgents] Terminal '${terminal.name}' → agentAdded id=${agent.id} file=${path.basename(mostRecentFile)}`);
+          this.onAgentUpdate({ type: 'agentAdded', agentId: agent.id, sessionId: agent.sessionId });
         }
       } catch (err) {
         if (err instanceof Error) {
@@ -397,7 +438,9 @@ export class FileWatcher {
     const agents = this.agentManager.getAllAgents();
     for (const agent of agents) {
       if (agent.terminalRef === terminal) {
-        this.agentManager.removeAgent(agent.id);
+        const agentId = agent.id;
+        this.agentManager.removeAgent(agentId);
+        this.onAgentUpdate({ type: 'agentRemoved', agentId });
         break;
       }
     }

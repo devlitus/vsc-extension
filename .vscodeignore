@@ -15,18 +15,42 @@ node_modules/
 *.test.ts
 *.test.tsx
 e2e/
+server/__tests__/
+webview-ui/test/
+test-setup.ts
+vitest.config.ts
+webview-ui/vitest.config.ts
+server/vitest.config.ts
 
 # Scripts
 scripts/
 
 # Documentation
 docs/
+AGENTS.md
+CLAUDE.md
+readme.md
+
+# AI tool directories
+.opencode/
+.claude/
+.vscode/
+
+# Lock files and config
+bun.lock
+crush.json
+opencode.json
+index.ts
 
 # Config files
 .eslintrc
 .eslintrc.json
 tsconfig.json
+tsconfig.*.json
+webview-ui/tsconfig.json
 .gitignore
+.gitattributes
 .DS_Store
+.editorconfig
 
 # License - NOT ignored, vsce requires it

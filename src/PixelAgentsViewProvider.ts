@@ -212,7 +212,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     // Initialize watchAllSessions setting
     const watchAllSessions = this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.watchAllSessions, false);
     // Fire and forget - we don't want to block initialization
-    this.fileWatcher.setWatchAllSessions(watchAllSessions).catch(() => {});
+    this.fileWatcher.setWatchAllSessions(watchAllSessions).catch(() => { });
 
     this.sendInitialMessages();
   }
@@ -252,7 +252,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (typeof msg.enabled === 'boolean') {
           this.context.globalState.update(GLOBAL_STATE_KEYS.watchAllSessions, msg.enabled);
           // Fire and forget - we don't want to block the message handler
-          this.fileWatcher.setWatchAllSessions(msg.enabled).catch(() => {});
+          this.fileWatcher.setWatchAllSessions(msg.enabled).catch(() => { });
         }
         break;
       }
@@ -267,9 +267,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (typeof msg.enabled === 'boolean') {
           this.context.globalState.update(GLOBAL_STATE_KEYS.hooksEnabled, msg.enabled);
           if (msg.enabled) {
-            installHooks(this.server.port, this.server.token).catch(() => {});
+            installHooks(this.server.port, this.server.token).catch(() => { });
           } else {
-            uninstallHooks().catch(() => {});
+            uninstallHooks().catch(() => { });
           }
         }
         break;
@@ -544,6 +544,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
 
     const sanitized = sanitizeMessage(message);
+    console.log(`[PixelAgents] → webview: ${JSON.stringify(sanitized).substring(0, 120)}`);
     this.webviewView.webview.postMessage(sanitized);
 
     // If inspection panel is open for this agent, send updated inspection data on relevant events
@@ -599,6 +600,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     const board = loadBoard();
     this.webviewView.webview.postMessage({ type: 'kanbanLoaded', board });
+
+    // Re-send agentAdded for any agents already discovered before the webview opened.
+    // This handles the case where polling finds JSONL files before the panel is visible
+    // (common in installed .vsix where the panel starts closed).
+    for (const agent of this.agentManager.getAllAgents()) {
+      const sanitized = sanitizeMessage({
+        type: 'agentAdded',
+        agentId: agent.id,
+        sessionId: agent.sessionId,
+      });
+      this.webviewView.webview.postMessage(sanitized);
+    }
   }
 
   private getHtmlForWebview(): string {
@@ -646,7 +659,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.disposables.forEach(d => d.dispose());
     this.disposables = [];
 
-    uninstallHooks().catch(() => {});
-    this.server.stop().catch(() => {});
+    uninstallHooks().catch(() => { });
+    this.server.stop().catch(() => { });
   }
 }

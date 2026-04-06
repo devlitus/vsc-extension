@@ -299,4 +299,62 @@ describe('AgentManager', () => {
       expect(agent.turnHistory).toEqual([]);
     });
   });
+
+  describe('updateSessionId (BUG C fix)', () => {
+    it('does nothing when agent does not exist', () => {
+      expect(() => agentManager.updateSessionId(999, 'new-session')).not.toThrow();
+    });
+
+    it('does nothing when sessionId is the same', () => {
+      agentManager.createAgent('session-123', '/test/project', '/test/project/.claude/session.jsonl');
+      const before = agentManager.getAgentBySessionId('session-123');
+      agentManager.updateSessionId(1, 'session-123');
+      const after = agentManager.getAgentBySessionId('session-123');
+      expect(after).toBe(before);
+    });
+
+    it('updates agent.sessionId field', () => {
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      agentManager.updateSessionId(1, 'session-xyz');
+      const agent = agentManager.getAgent(1);
+      expect(agent?.sessionId).toBe('session-xyz');
+    });
+
+    it('removes old sessionId from agentsBySessionId lookup', () => {
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      agentManager.updateSessionId(1, 'session-xyz');
+      expect(agentManager.getAgentBySessionId('session-abc')).toBeUndefined();
+    });
+
+    it('adds new sessionId to agentsBySessionId lookup', () => {
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      agentManager.updateSessionId(1, 'session-xyz');
+      const found = agentManager.getAgentBySessionId('session-xyz');
+      expect(found).toBeDefined();
+      expect(found?.id).toBe(1);
+    });
+
+    it('does not remove a different agent that shares the old sessionId key', () => {
+      // Two agents where agent2 somehow holds the same session key as agent1's old sessionId
+      const agent1 = agentManager.createAgent('session-shared', '/project1', '/project1/s.jsonl');
+      // Manually force a second agent into the same session slot to simulate a collision scenario
+      const agent2 = agentManager.createAgent('session-other', '/project2', '/project2/s.jsonl');
+      // Simulate agentsBySessionId already pointing to agent2 for 'session-shared'
+      // by first removing agent1's mapping and injecting agent2
+      // (We test the guard: `agentsBySessionId.get(old) === agent` before deleting)
+      // For this we update agent2 to share agent1's sessionId key via another updateSessionId
+      agentManager.updateSessionId(agent2.id, 'session-shared'); // agent2 now owns 'session-shared'
+      // Now update agent1 away from 'session-shared'
+      agentManager.updateSessionId(agent1.id, 'session-new');
+      // agent2 must still be findable under 'session-shared'
+      expect(agentManager.getAgentBySessionId('session-shared')?.id).toBe(agent2.id);
+    });
+
+    it('allows getAgentBySessionId to find agent after update', () => {
+      agentManager.createAgent('', '/test/project', '/test/project/.claude/session.jsonl');
+      agentManager.updateSessionId(1, 'real-session-id');
+      const found = agentManager.getAgentBySessionId('real-session-id');
+      expect(found?.id).toBe(1);
+    });
+  });
 });
