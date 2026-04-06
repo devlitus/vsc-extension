@@ -98,7 +98,9 @@ export function saveLayout(layout: LayoutData): void {
     const content = JSON.stringify(validated, null, 2);
 
     fs.writeFileSync(tempFile, content, 'utf-8');
+    fs.chmodSync(tempFile, 0o600);
     fs.renameSync(tempFile, LAYOUT_FILE);
+    fs.chmodSync(LAYOUT_FILE, 0o600);
   } catch {
     // Ignore save errors
   }
