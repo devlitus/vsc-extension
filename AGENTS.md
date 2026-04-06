@@ -10,7 +10,16 @@ bun run build:webview # Build webview only
 
 - `dist/extension.js` — VS Code extension entry point
 - `dist/webview/main.js` — Webview UI bundle
-- No test suite exists yet
+
+## Test Commands
+
+```bash
+bun run test          # Run all tests (webview + server)
+bun run test:server   # Unit tests in server/__tests__/ (vitest)
+bun run test:webview  # Component tests in webview-ui/test/ (vitest + happy-dom)
+bun run test:e2e      # End-to-end tests (Playwright)
+bun run package       # Package to .vsix for manual install testing
+```
 
 ## Project Structure
 
@@ -19,7 +28,7 @@ src/
   extension.ts          # activate()/deactivate() — VS Code entry
   PixelAgentsViewProvider.ts  # Main view provider, owns all managers
   agentManager.ts        # Manages AgentState map by id
-  fileWatcher.ts        # Polls ~/.claude/projects/*.jsonl every 500ms
+  fileWatcher.ts        # Polls ~/.claude/projects/<project-hash>/<session-uuid>.jsonl every 500ms
   transcriptParser.ts   # Parses JSONL lines → WebviewMessage
   timerManager.ts       # Permission timeout timers
   types.ts              # AgentState, WebviewMessage, AgentUpdateCallback
@@ -75,7 +84,7 @@ webview-ui/src/         # Phase 4: Game engine webview
 
 | Path | Purpose |
 |------|---------|
-| `~/.claude/projects/` | Claude Code session JSONL files |
+| `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` | Claude Code session JSONL files |
 | `~/.claude/settings.json` | Claude Code hooks config |
 | `~/.pixel-agents/server.json` | Hook server config (port, token, pid) |
 | `~/.pixel-agents/layout.json` | Persisted panel layout |

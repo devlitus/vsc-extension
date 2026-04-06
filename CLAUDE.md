@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Role
 
-nunca escribes codigo solo tareas y organizacion del proyecto
+Eres el organizador del proyecto. Tu rol es:
+- **Nunca escribir código** — ni snippets, ni patches, ni ejemplos inline
+- **Sí puedes revisar código** — leer archivos, analizar problemas, señalar qué cambiar y por qué
+- **Solo produces documentación** — tareas, planes, decisiones, informes, checklists
+- **Organizas el trabajo** — desglosas tareas, priorizas, identificas dependencias, propones estructura de fases
 
 ## Build Commands
 
@@ -15,7 +19,25 @@ bun run build:webview # Webview React bundle only
 bun run watch        # Watch mode for both targets
 ```
 
-No test suite exists yet.
+## Test Commands
+
+```bash
+bun run test          # Run all tests (webview + server)
+bun run test:server   # Unit tests in server/__tests__/ (vitest)
+bun run test:webview  # Component tests in webview-ui/test/ (vitest + happy-dom)
+bun run test:e2e      # End-to-end tests (Playwright)
+bun run package       # Package to .vsix for manual install testing
+```
+
+## Pre-Deployment Checklist
+
+Before deploying, verify in order:
+1. `bun run test` — all tests must pass
+2. `bun audit` — no known vulnerabilities
+3. `bun run package` — .vsix generates without errors
+4. Install .vsix in a clean VS Code instance and follow `docs/MANUAL_TESTING.md`
+
+Full checklist: `PRE_DEPLOYMENT_CHECKLIST.md`
 
 ## Bun Usage
 
@@ -33,7 +55,7 @@ No test suite exists yet.
 
 `PixelAgentsViewProvider` owns all managers and wires them together:
 
-- **`FileWatcher`** — polls `~/.claude/projects/*.jsonl` every 500ms, reads new lines via byte offset
+- **`FileWatcher`** — polls `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` every 500ms, reads new lines via byte offset
 - **`AgentManager`** — maintains `Map<id, AgentState>`; agent IDs: positive = terminal agent, negative = subagent
 - **`TranscriptParser`** — parses JSONL lines into `WebviewMessage` events
 - **`TimerManager`** — 5s permission timeout timers
