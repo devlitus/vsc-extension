@@ -17,7 +17,7 @@ export interface Character {
   animFrame: number;
   animTimer: number;
   toolStatus?: string;
-  bubbleType?: 'permission' | 'waiting' | 'zzz';
+  bubbleType?: 'permission' | 'waiting' | 'zzz' | 'done';
   bubbleText?: string;
   bubbleTextTimer?: number;
   contextUsed?: number;
