@@ -26,7 +26,7 @@ function breakSpotFor(agentId: number) {
 }
 
 const MIN_TOOL_DISPLAY_MS = 2000; // Minimum time to show tool animation before toolEnd
-const SLEEP_DELAY_MS = 30_000;    // Idle at desk this long → ZZZ bubble
+const SLEEP_DELAY_MS = 10_000;    // Idle at desk this long → ZZZ bubble
 
 // Conference meeting spots: chairs around the conference table
 const CONFERENCE_SPOTS: Position[] = [
