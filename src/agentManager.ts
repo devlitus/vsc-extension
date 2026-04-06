@@ -15,12 +15,16 @@ async function validateCwd(input: string): Promise<string | null> {
     return real;
   } catch { return null; }
 }
-const MAX_TURN_HISTORY = 20;
 
 export class AgentManager {
   private agents = new Map<number, AgentState>();
+  private agentsBySessionId: Map<string, AgentState> = new Map();
   private nextPositiveId = 1;
   private nextNegativeId = -1;
+  private readonly MAX_TURN_HISTORY = 20;
+  private readonly MAX_UNKNOWN_TYPES = 100;
+  private gitBranchCache: Map<string, { branch: string; mtime: number }> = new Map();
+  private readonly CACHE_TTL = 5000; // 5 seconds
 
   createAgent(
     sessionId: string,
@@ -37,6 +41,7 @@ export class AgentManager {
       jsonlFile,
       fileOffset: 0,
       lineBuffer: '',
+      lineChunks: [], // Performance: Array-based string accumulation
       activeToolIds: new Set<string>(),
       activeToolStatuses: new Map<string, string>(),
       activeToolNames: new Map<string, string>(),
@@ -67,6 +72,7 @@ export class AgentManager {
     }
 
     this.agents.set(id, agent);
+    this.agentsBySessionId.set(sessionId, agent);
     return agent;
   }
 
@@ -78,8 +84,38 @@ export class AgentManager {
     return [...this.agents.values()];
   }
 
+  getAgentBySessionId(sessionId: string): AgentState | undefined {
+    return this.agentsBySessionId.get(sessionId);
+  }
+
   removeAgent(id: number): void {
+    const agent = this.agents.get(id);
+    if (agent) {
+      this.agentsBySessionId.delete(agent.sessionId);
+    }
+    this.cleanupAgent(id);
     this.agents.delete(id);
+  }
+
+  // Performance: Cleanup agent state to prevent unbounded memory growth
+  private cleanupAgent(id: number): void {
+    const agent = this.agents.get(id);
+    if (!agent) return;
+
+    // Limit turn history
+    if (agent.turnHistory.length > this.MAX_TURN_HISTORY) {
+      agent.turnHistory = agent.turnHistory.slice(-this.MAX_TURN_HISTORY);
+    }
+
+    // Clear unknown types if too many
+    if (agent.seenUnknownRecordTypes.size > this.MAX_UNKNOWN_TYPES) {
+      const entries = Array.from(agent.seenUnknownRecordTypes).slice(-this.MAX_UNKNOWN_TYPES);
+      agent.seenUnknownRecordTypes = new Set(entries);
+    }
+
+    // Clear line buffer and chunks
+    agent.lineBuffer = '';
+    agent.lineChunks = [];
   }
 
   getAgentCount(): number {
@@ -116,13 +152,41 @@ export class AgentManager {
       agent.branch = null;
       return null;
     }
+
+    // Check cache
+    const cached = this.gitBranchCache.get(cwd);
+    const now = Date.now();
+
+    if (cached && (now - cached.mtime) < this.CACHE_TTL) {
+      agent.branch = cached.branch;
+      return cached.branch;
+    }
+
     try {
-      const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD']);
-      agent.branch = stdout.trim();
-      return agent.branch;
+      const { execSync } = require('child_process');
+      const gitPath = execSync('which git', { encoding: 'utf-8' }).trim();
+      if (!gitPath) {
+        throw new Error('Git not found');
+      }
+      const { stdout } = await execFileAsync(gitPath, ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      const branch = stdout.trim();
+
+      // Update cache
+      this.gitBranchCache.set(cwd, { branch, mtime: now });
+      agent.branch = branch;
+      return branch;
     } catch {
       agent.branch = null;
       return null;
+    }
+  }
+
+  // Clear cache periodically or on git operations
+  clearGitCache(cwd?: string): void {
+    if (cwd) {
+      this.gitBranchCache.delete(cwd);
+    } else {
+      this.gitBranchCache.clear();
     }
   }
 
@@ -136,9 +200,9 @@ export class AgentManager {
       startedAt: agent.currentTurnStartTime,
       endedAt: Date.now(),
       toolsUsed: [...agent.toolsThisTurn],
-      tokensUsed: 0,
+      tokensUsed: agent.contextUsed ?? 0,
     };
-    if (agent.turnHistory.length >= MAX_TURN_HISTORY) {
+    if (agent.turnHistory.length >= this.MAX_TURN_HISTORY) {
       agent.turnHistory.shift();
     }
     agent.turnHistory.push(summary);

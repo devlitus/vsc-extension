@@ -12,6 +12,7 @@ import {
   SHUTDOWN_TIMEOUT_MS,
 } from './constants';
 import { HookEvent, ServerConfig } from './types';
+import { validateHookEvent } from './hookEventHandler';
 
 /**
  * HTTP server that receives hook events from Claude Code.
@@ -71,6 +72,10 @@ export class PixelAgentsServer {
       this.httpServer.listen(0, '127.0.0.1', () => {
         const addr = this.httpServer?.address();
         if (addr && typeof addr === 'object') {
+          if (addr.address !== '127.0.0.1') {
+            reject(new Error(`Server bound to unexpected address: ${addr.address}`));
+            return;
+          }
           this.port = addr.port;
         }
 
@@ -159,11 +164,29 @@ export class PixelAgentsServer {
     if (req.method === 'POST' && hooksMatch) {
       const providerId = hooksMatch[1];
 
-      // Validate providerId BEFORE any processing
+      // Security: Validate providerId BEFORE any processing
       if (!PROVIDER_ID_REGEX.test(providerId)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid providerId' }));
         return;
+      }
+
+      // Security: Add origin validation to prevent CSRF attacks
+      const origin = req.headers.origin || req.headers.referer;
+      if (origin) {
+        const allowedOrigins = [
+          'http://localhost',
+          'https://claude.ai',
+          'https://api.anthropic.com'
+        ];
+        const isAllowed = allowedOrigins.some(allowed =>
+          typeof origin === 'string' && origin.startsWith(allowed)
+        );
+        if (!isAllowed) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Origin not allowed' }));
+          return;
+        }
       }
 
       // Bearer auth
@@ -175,17 +198,25 @@ export class PixelAgentsServer {
       }
 
       const authToken = authHeader.slice(7);
-      // Use timingSafeEqual with same length buffers
-      const tokenBuf = Buffer.from(this.token);
-      const authBuf = Buffer.from(authToken);
-      if (tokenBuf.length !== authBuf.length || !crypto.timingSafeEqual(tokenBuf, authBuf)) {
+      // Security: Use timingSafeEqual without length check to prevent timing attacks
+      // timingSafeEqual will throw if lengths differ, which we handle safely
+      try {
+        const authBuffer = Buffer.from(authToken);
+        const expectedBuffer = Buffer.from(this.token);
+        if (!crypto.timingSafeEqual(authBuffer, expectedBuffer)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid token' }));
+          return;
+        }
+      } catch {
+        // TimingSafeEqual throws if buffer lengths differ, which also indicates invalid token
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid token' }));
         return;
       }
 
       // Collect body with size limit
-      let body = '';
+      const chunks: Buffer[] = [];
       let bodySize = 0;
       let rejectTooLarge = false;
 
@@ -196,7 +227,7 @@ export class PixelAgentsServer {
           req.destroy();
           return;
         }
-        body += chunk.toString();
+        chunks.push(chunk);
       });
 
       req.on('end', () => {
@@ -207,10 +238,11 @@ export class PixelAgentsServer {
         }
 
         try {
+          const body = Buffer.concat(chunks).toString('utf-8');
           const event = JSON.parse(body);
 
           // Schema validation
-          if (!this.validateHookEvent(event)) {
+          if (!validateHookEvent(event)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid hook event schema' }));
             return;
@@ -242,26 +274,6 @@ export class PixelAgentsServer {
   }
 
   /**
-   * Validates a parsed hook event object against the expected schema.
-   *
-   * Checks that the object has a valid `type` (one of PreToolUse, PostToolUse,
-   * Stop, SubagentStop), a non-empty `sessionId` string, and that sessionId
-   * length does not exceed 256 characters.
-   *
-   * @param obj - Raw parsed JSON object to validate
-   * @returns true if the object matches the HookEvent schema
-   */
-  private validateHookEvent(obj: unknown): boolean {
-    if (typeof obj !== 'object' || obj === null) return false;
-    const event = obj as Record<string, unknown>;
-    if (typeof event.type !== 'string') return false;
-    if (!['PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop'].includes(event.type)) return false;
-    if (typeof event.sessionId !== 'string') return false;
-    if (event.sessionId.length > 256) return false; // Prevent oversized sessionId
-    return true;
-  }
-
-  /**
    * Finds an existing PixelAgentsServer process and returns its configuration.
    *
    * Reads `~/.pixel-agents/server.json` and verifies the process is still
@@ -285,11 +297,24 @@ export class PixelAgentsServer {
       const content = await fs.promises.readFile(SERVER_CONFIG_PATH, 'utf-8');
       const config = JSON.parse(content) as ServerConfig;
 
-      // Verify process is still running
+      // Security: Verify process is still running
       try {
         process.kill(config.pid, 0);
       } catch {
         // Process doesn't exist
+        return null;
+      }
+
+      // Security: Additional verification - Check process name/command line to prevent PID reuse attacks
+      try {
+        const { execSync } = require('child_process');
+        const cmdline = execSync(`cat /proc/${config.pid}/cmdline 2>/dev/null`, { encoding: 'utf-8' });
+        if (cmdline && !cmdline.includes('extension.js') && !cmdline.includes('vscode')) {
+          // PID exists but doesn't belong to a VS Code extension process
+          return null;
+        }
+      } catch {
+        // Cannot verify process identity, treat as non-existent
         return null;
       }
 

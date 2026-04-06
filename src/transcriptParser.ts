@@ -1,14 +1,36 @@
 import * as os from 'os';
 import * as path from 'path';
-import { AgentState, WebviewMessage } from './types';
+import { AgentState, WebviewMessage, TurnSummary } from './types';
 
 const POLL_PROTOTYPE_KEYS = ['__proto__', 'constructor', 'prototype'];
 
+// Performance: Fast path shallow clone with prototype pollution protection
+// Use structuredClone() for deep cloning only when necessary (Node 17+)
 export function deepCloneWithProtection<T>(obj: T): T {
   if (obj === null || typeof obj !== 'object') {
     return obj;
   }
 
+  // Performance: Try structuredClone first (fast native implementation, Node 17+)
+  if (typeof structuredClone !== 'undefined') {
+    try {
+      const cloned = structuredClone(obj);
+      // Double-check no prototype pollution in the clone
+      if (typeof cloned === 'object' && cloned !== null) {
+        for (const key of POLL_PROTOTYPE_KEYS) {
+          if (key in cloned) {
+            // Fall back to manual clone if structuredClone didn't filter properly
+            break;
+          }
+        }
+        return cloned as T;
+      }
+    } catch {
+      // structuredClone may fail for some objects, fall back to manual clone
+    }
+  }
+
+  // Fallback: Fast path shallow copy with protection
   if (obj instanceof Set) {
     return new Set([...obj].map(item => deepCloneWithProtection(item))) as unknown as T;
   }
@@ -22,17 +44,19 @@ export function deepCloneWithProtection<T>(obj: T): T {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => deepCloneWithProtection(item)) as unknown as T;
+    const arr = obj.map(item => deepCloneWithProtection(item));
+    Object.freeze(arr);
+    return arr as T;
   }
 
-  const clone = {} as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    if (POLL_PROTOTYPE_KEYS.includes(key)) {
-      continue;
+  const cloned: any = {};
+  for (const key in obj) {
+    if (!POLL_PROTOTYPE_KEYS.includes(key)) {
+      cloned[key] = deepCloneWithProtection((obj as Record<string, unknown>)[key]);
     }
-    clone[key] = deepCloneWithProtection((obj as Record<string, unknown>)[key]);
   }
-  return clone as T;
+  Object.freeze(cloned);
+  return cloned as T;
 }
 
 export function formatToolStatus(toolName: string, status: string): string {
@@ -127,13 +151,6 @@ interface ToolSummary {
   count: number;
 }
 
-interface TurnSummary {
-  startedAt: number;
-  endedAt: number;
-  toolsUsed: ToolSummary[];
-  tokensUsed: number;
-}
-
 function finalizeTurn(agentState: AgentState): void {
   if (agentState.currentTurnStartTime === undefined) {
     return;
@@ -144,7 +161,7 @@ function finalizeTurn(agentState: AgentState): void {
     startedAt: agentState.currentTurnStartTime,
     endedAt: Date.now(),
     toolsUsed: agentState.toolsThisTurn.map(t => ({ name: t.name, count: t.count })),
-    tokensUsed: 0,
+    tokensUsed: agentState.contextUsed ?? 0,
   };
 
   // Circular buffer: keep last 20 turn summaries

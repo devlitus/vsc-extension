@@ -1,5 +1,6 @@
-import { AgentState, WebviewMessage } from '../types';
+import { WebviewMessage } from '../types';
 import { HookEvent } from './types';
+import { AgentManager } from '../agentManager';
 
 /**
  * Validates a raw JSON object as a HookEvent.
@@ -13,7 +14,7 @@ import { HookEvent } from './types';
  *
  * @example
  * if (validateHookEvent(parsedBody)) {
- *   handleHookEvent(parsedBody as HookEvent, agents, postMessage);
+ *   handleHookEvent(parsedBody as HookEvent, agentManager, postMessage);
  * }
  */
 export function validateHookEvent(obj: unknown): obj is HookEvent {
@@ -39,16 +40,16 @@ export function validateHookEvent(obj: unknown): obj is HookEvent {
  * was removed or sessionId doesn't match).
  *
  * @param event - The hook event from Claude Code
- * @param agents - Array of active AgentState objects to search
+ * @param agentManager - AgentManager instance for O(1) agent lookups
  * @param postMessage - Callback to send messages to the webview
  */
 export function handleHookEvent(
   event: HookEvent,
-  agents: AgentState[],
+  agentManager: AgentManager,
   postMessage: (agentId: number, msg: WebviewMessage) => void
 ): void {
   // Find agent by sessionId - silently ignore if not found
-  const agent = agents.find(a => a.sessionId === event.sessionId);
+  const agent = agentManager.getAgentBySessionId(event.sessionId);
   if (!agent) {
     return;
   }

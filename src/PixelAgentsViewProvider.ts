@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as path from 'path';
+import * as os from 'os';
 import { AgentManager } from './agentManager';
 import { TimerManager } from './timerManager';
 import { FileWatcher } from './fileWatcher';
@@ -13,6 +13,9 @@ import { WebviewMessage, AssetManifest } from './types';
 import { PixelAgentsServer } from './server/server';
 import { installHooks, uninstallHooks } from './server/providers/file/claudeHookInstaller';
 import { handleHookEvent } from './server/hookEventHandler';
+import { sanitizeString, isValidGithubRepo } from './utils/sanitization';
+import { GithubSyncService } from './services/githubSyncService';
+import { AgentActionHandler } from './services/agentActionHandler';
 
 const EXTENSION_VERSION = '0.0.1';
 
@@ -27,34 +30,7 @@ const GLOBAL_STATE_KEYS = {
   githubRepo: 'githubRepo',
 } as const;
 
-const HTML_SANITIZE_PATTERN = /[<>&"']/g;
-const GITHUB_REPO_REGEX = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]*$/;
 
-// Security: Validate GitHub repository format (owner/repo)
-function isValidGithubRepo(repo: string): boolean {
-  if (typeof repo !== 'string' || repo.length === 0) return false;
-  const valid = GITHUB_REPO_REGEX.test(repo);
-  if (!valid) {
-    console.error('[Security] Invalid GitHub repo format:', repo);
-  }
-  return valid;
-}
-
-function sanitizeString(str: unknown): string {
-  if (typeof str !== 'string') {
-    return '';
-  }
-  return str.replace(HTML_SANITIZE_PATTERN, (c) => {
-    switch (c) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '&': return '&amp;';
-      case '"': return '&quot;';
-      case "'": return '&#39;';
-      default: return c;
-    }
-  });
-}
 
 function sanitizeMessage(msg: WebviewMessage): WebviewMessage {
   switch (msg.type) {
@@ -130,16 +106,71 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private timerManager: TimerManager;
   private fileWatcher: FileWatcher;
   private server: PixelAgentsServer;
+  private githubSyncService: GithubSyncService;
+  private agentActionHandler: AgentActionHandler;
   private idleAgents = new Set<number>();
   private openInspectionAgentId: number | null = null;
-  private lastGithubSyncTime = 0;
-  private readonly githubSyncCooldownMs = 60000; // 60 seconds
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.agentManager = new AgentManager();
     this.timerManager = new TimerManager();
     this.fileWatcher = new FileWatcher(this.agentManager, this.onAgentUpdate.bind(this));
     this.server = new PixelAgentsServer();
+    this.githubSyncService = new GithubSyncService();
+    this.agentActionHandler = new AgentActionHandler(this.agentManager, context);
+  }
+
+  private async launchAgent(bypassPermissions: boolean): Promise<void> {
+    // Open directory picker or use current workspace as default
+    let cwd: string | undefined;
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      const selection = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Select Working Directory',
+        defaultUri: vscode.workspace.workspaceFolders[0].uri,
+      });
+      if (!selection || selection.length === 0) {
+        return;
+      }
+      cwd = selection[0].fsPath;
+    } else {
+      const selection = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Select Working Directory',
+      });
+      if (!selection || selection.length === 0) {
+        return;
+      }
+      cwd = selection[0].fsPath;
+    }
+
+    // Create VS Code terminal with name 'claude'
+    const terminal = vscode.window.createTerminal({
+      name: 'claude',
+      cwd,
+    });
+
+    // Execute claude command with absolute path (SECURITY-002)
+    try {
+      const { execSync } = require('child_process');
+      const claudePath = execSync('which claude', { encoding: 'utf-8' }).trim();
+      if (!claudePath) {
+        throw new Error('Claude CLI not found');
+      }
+      const command = bypassPermissions
+        ? `${claudePath} --dangerously-skip-permissions`
+        : claudePath;
+      terminal.sendText(command, true);
+    } catch (error) {
+      // Fall back to 'claude' if absolute path cannot be determined
+      const command = bypassPermissions
+        ? 'claude --dangerously-skip-permissions'
+        : 'claude';
+      terminal.sendText(command, true);
+    }
+    terminal.show();
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -166,7 +197,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     this.server.start().then(() => {
       this.server.onEvent('claude', (event) => {
-        handleHookEvent(event, this.agentManager.getAllAgents(), (_agentId, msg) => {
+        handleHookEvent(event, this.agentManager, (_agentId, msg) => {
           this.onAgentUpdate(msg);
         });
       });
@@ -180,7 +211,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     // Initialize watchAllSessions setting
     const watchAllSessions = this.context.globalState.get<boolean>(GLOBAL_STATE_KEYS.watchAllSessions, false);
-    this.fileWatcher.setWatchAllSessions(watchAllSessions);
+    // Fire and forget - we don't want to block initialization
+    this.fileWatcher.setWatchAllSessions(watchAllSessions).catch(() => {});
 
     this.sendInitialMessages();
   }
@@ -207,6 +239,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
 
     switch (msg.type) {
+      case 'launchAgent': {
+        const bypassPermissions = msg.bypassPermissions === true;
+        await this.launchAgent(bypassPermissions);
+        break;
+      }
       case 'addAssetDirectory': {
         this.addAssetDirectory();
         break;
@@ -214,7 +251,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       case 'watchAllSessions': {
         if (typeof msg.enabled === 'boolean') {
           this.context.globalState.update(GLOBAL_STATE_KEYS.watchAllSessions, msg.enabled);
-          this.fileWatcher.setWatchAllSessions(msg.enabled);
+          // Fire and forget - we don't want to block the message handler
+          this.fileWatcher.setWatchAllSessions(msg.enabled).catch(() => {});
         }
         break;
       }
@@ -279,7 +317,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           break;
         }
         if (action === 'interrupt') {
-          const success = this.agentManager.interruptAgent(agentId);
+          const success = await this.agentActionHandler.interruptAgent(agentId);
           if (this.webviewView) {
             this.webviewView.webview.postMessage({
               type: 'agentAction',
@@ -290,65 +328,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         } else if (action === 'redirect') {
           const payload = msg.payload as { newCwd?: string } | undefined;
-          let newCwd = payload?.newCwd as string | undefined;
-          const newCwdFromPayload = !!payload?.newCwd;
-          if (!newCwd) {
-            const selected = await vscode.window.showOpenDialog({
-              canSelectFolders: true,
-              canSelectMany: false,
-              openLabel: 'Select Working Directory',
-            });
-            if (!selected || selected.length === 0) {
-              break;
-            }
-            newCwd = selected[0].fsPath;
-          }
-
-          // Validate newCwd if from payload (not from native folder picker)
-          if (newCwdFromPayload) {
-            let validCwd: string | null = null;
-            try {
-              const real = fs.realpathSync(path.resolve(newCwd));
-              if (fs.statSync(real).isDirectory()) {
-                validCwd = real;
-              }
-            } catch { /* invalid */ }
-            if (!validCwd) {
-              if (this.webviewView) {
-                this.webviewView.webview.postMessage({
-                  type: 'agentAction',
-                  agentId,
-                  action: 'redirect',
-                  payload: { success: false, error: 'Invalid working directory' },
-                });
-              }
-              break;
-            }
-            newCwd = validCwd;
-          }
-
-          // Interrupt the current agent first
-          this.agentManager.interruptAgent(agentId);
-
-          // Open new terminal in newCwd
-          const terminal = vscode.window.createTerminal({
-            name: `Claude (Redirected)`,
-            cwd: newCwd,
-          });
-
-          // Start claude in the new terminal
-          terminal.sendText('claude', true);
-          terminal.show();
-
-          // Reassign the agent to the new terminal
-          this.agentManager.reassignTerminal(agentId, terminal, newCwd);
-
+          const result = await this.agentActionHandler.redirectAgent(agentId, payload?.newCwd);
           if (this.webviewView) {
             this.webviewView.webview.postMessage({
               type: 'agentAction',
               agentId,
               action: 'redirect',
-              payload: { success: true, newCwd },
+              payload: result,
             });
           }
         }
@@ -362,7 +348,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (!agent || !agent.terminalRef) {
           break;
         }
-        this.agentManager.sendChatMessage(agentId, text);
+        await this.agentActionHandler.sendChatMessage(agentId, text);
         break;
       }
       case 'kanbanUpdate': {
@@ -404,83 +390,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        // Security: Rate limiting - prevent too frequent syncs
-        const now = Date.now();
-        if (now - this.lastGithubSyncTime < this.githubSyncCooldownMs) {
-          const remainingSeconds = Math.ceil((this.githubSyncCooldownMs - (now - this.lastGithubSyncTime)) / 1000);
-          if (this.webviewView) {
-            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'error', message: `Please wait ${remainingSeconds}s before syncing again` });
-          }
-          break;
-        }
+        const result = await this.githubSyncService.syncIssues(githubRepo, githubToken);
 
-        try {
-          const board = loadBoard();
-          const headers: Record<string, string> = {
-            'Accept': 'application/vnd.github+json',
-            'Content-Type': 'application/json',
-          };
-          if (githubToken) {
-            headers['Authorization'] = `Bearer ${githubToken}`;
-          }
-          const response = await fetch(`https://api.github.com/repos/${githubRepo}/issues`, { headers });
-          if (!response.ok) {
-            // Security: Don't expose internal error details
-            if (response.status === 401 || response.status === 403) {
-              throw new Error('Authentication failed. Please check your GitHub token.');
-            } else if (response.status === 404) {
-              throw new Error('Repository not found. Please check the repo format.');
-            } else {
-              throw new Error('Failed to fetch issues from GitHub.');
-            }
-          }
-          // Security: Validate content-type
-          const contentType = response.headers.get('content-type');
-          if (!contentType || !contentType.includes('application/json')) {
-            throw new Error('Invalid response from GitHub API.');
-          }
-          const issues = await response.json() as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; html_url: string }>;
-          if (!Array.isArray(issues)) {
-            throw new Error('Invalid response from GitHub API.');
-          }
-
-          // Security: Sanitize imported task descriptions to prevent XSS
-          const { sanitizeMarkdown } = await import('./kanbanPersistence');
-
-          for (const issue of issues) {
-            // Skip if already imported
-            if (board.tasks.some(t => t.sourceUrl === issue.html_url)) continue;
-            const priority = issue.labels?.some(l => l.name === 'priority:high')
-              ? 'high' as const
-              : issue.labels?.some(l => l.name === 'priority:medium')
-              ? 'medium' as const
-              : 'low' as const;
-            const task: KanbanTask = {
-              id: `gh-${issue.number}-${Date.now()}`,
-              title: sanitizeString(issue.title),
-              description: sanitizeMarkdown(issue.body || ''),
-              priority,
-              status: 'backlog',
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              sourceUrl: issue.html_url,
-              sourceProvider: 'github',
-            };
-            board.tasks.push(task);
-          }
-          saveBoard(board);
-          this.lastGithubSyncTime = Date.now();
-          if (this.webviewView) {
+        if (this.webviewView) {
+          if (result.success) {
+            const board = loadBoard();
             this.webviewView.webview.postMessage({ type: 'kanbanUpdated', board });
-            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'success', message: `Imported ${issues.length} issues` });
           }
-        } catch (err) {
-          console.error('[Error] GitHub sync failed:', err);
-          if (this.webviewView) {
-            // Security: Don't expose internal error details to client
-            const errorMessage = err instanceof Error ? err.message : 'Failed to sync with GitHub.';
-            this.webviewView.webview.postMessage({ type: 'githubSync', result: 'error', message: errorMessage });
-          }
+          this.webviewView.webview.postMessage({
+            type: 'githubSync',
+            result: result.success ? 'success' : 'error',
+            message: result.message,
+          });
         }
         break;
       }
@@ -524,6 +445,30 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private async validateAssetDirectory(dirPath: string): Promise<boolean> {
+    try {
+      const realPath = await fs.promises.realpath(dirPath);
+      const stat = await fs.promises.stat(realPath);
+
+      if (!stat.isDirectory()) {
+        console.warn(`[Security] Asset path is not a directory: ${realPath}`);
+        return false;
+      }
+
+      // Optional: Restrict to user home or specific allowed directories
+      const homeDir = os.homedir();
+      if (!realPath.startsWith(homeDir)) {
+        console.warn(`[Security] Asset path outside home directory: ${realPath}`);
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error(`[Security] Failed to validate asset directory: ${err}`);
+      return false;
+    }
+  }
+
   private async addAssetDirectory(): Promise<void> {
     if (!this.webviewView) {
       return;
@@ -540,11 +485,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
 
     const dirPath = selected[0].fsPath;
-    const dirs = this.context.globalState.get<string[]>(GLOBAL_STATE_KEYS.externalAssetDirs, []);
-
-    if (!dirs.includes(dirPath)) {
-      dirs.push(dirPath);
-      this.context.globalState.update(GLOBAL_STATE_KEYS.externalAssetDirs, dirs);
+    if (await this.validateAssetDirectory(dirPath)) {
+      const dirs = this.context.globalState.get<string[]>(GLOBAL_STATE_KEYS.externalAssetDirs, []);
+      if (!dirs.includes(dirPath)) {
+        dirs.push(dirPath);
+        await this.context.globalState.update(GLOBAL_STATE_KEYS.externalAssetDirs, dirs);
+      }
     }
 
     // Rescan and send updated assets to webview
@@ -657,6 +603,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   private getHtmlForWebview(): string {
     const nonce = crypto.randomBytes(16).toString('base64');
+    const cspNonce = crypto.randomBytes(16).toString('base64');
     const scriptUri = this.webviewView!.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'main.js')
     );
@@ -666,9 +613,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.webviewView!.webview.cspSource} https: data:; style-src ${this.webviewView!.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.webviewView!.webview.cspSource} https: data:; style-src ${this.webviewView!.webview.cspSource} 'nonce-${cspNonce}'; script-src 'nonce-${nonce}';">
   <title>Pixel Agents</title>
-  <style>
+  <style nonce="${cspNonce}">
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body, #root { width: 100%; height: 100%; overflow: hidden; }
     body { background-color: #1e1e1e; }
