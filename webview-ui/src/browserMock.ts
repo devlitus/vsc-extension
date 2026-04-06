@@ -10,8 +10,9 @@ export function getState<T = unknown>(): T {
   return {} as T;
 }
 
-export function onMessage(handler: MessageHandler): void {
+export function onMessage(handler: MessageHandler): () => void {
   messageHandler = handler;
+  return () => { messageHandler = null; };
 }
 
 export function simulateMessage(message: unknown): void {

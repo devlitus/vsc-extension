@@ -1,6 +1,7 @@
 import { OfficeState, createOfficeState, addCharacter, addSubagent, removeSubagent } from './officeState';
 import { updateCharacters } from './characters';
 import { render } from './renderer';
+import { SPEECH_BUBBLE_DURATION_MS } from '../../../../src/kanbanTypes';
 
 let rafId: number | null = null;
 let lastTime = 0;
@@ -21,7 +22,16 @@ export function startGameLoop(canvasEl: HTMLCanvasElement, initialState?: Office
     if (state && canvas) {
       processMessageQueue(state);
       updateCharacters(state, deltaMs);
-      
+
+      // Clear expired speech bubbles
+      const now = Date.now();
+      for (const char of state.characters.values()) {
+        if (char.bubbleTextTimer && now > char.bubbleTextTimer) {
+          char.bubbleText = undefined;
+          char.bubbleTextTimer = undefined;
+        }
+      }
+
       const ctx = canvas.getContext('2d');
       if (ctx) {
         render(ctx, state);
@@ -152,6 +162,16 @@ function processMessageQueue(state: OfficeState): void {
             if (char.bubbleType === 'zzz') {
               char.bubbleType = undefined;
             }
+          }
+        }
+        break;
+
+      case 'kanbanTaskAssigned':
+        if (typeof message.agentId === 'number' && typeof message.taskTitle === 'string') {
+          const char = state.characters.get(message.agentId);
+          if (char) {
+            char.bubbleText = message.taskTitle.slice(0, 30); // Truncate to 30 chars
+            char.bubbleTextTimer = Date.now() + SPEECH_BUBBLE_DURATION_MS;
           }
         }
         break;

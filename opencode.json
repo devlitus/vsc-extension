@@ -3,27 +3,18 @@
   "default_agent": "orchestrator",
   "provider": {
     "minimax": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "minimax",
       "options": {
-        "baseURL": "https://minimax.io"
-      },
-      "models": {
-        "MiniMax-M2.7": {
-          "name": "MiniMax-M2.7"
-        }
+        "baseURL": "https://api.minimax.io/anthropic"
       }
     },
-    "github Copilot": {
-      "npm": "@ai-sdk/github-copilot",
-      "name": "github Copilot",
+    "copilot": {
       "options": {
-        "baseURL": "https://api.github.com"
-      },
-      "models": {
-        "github Copilot": {
-          "name": "github Copilot"
-        }
+        "baseURL": "https://api.githubcopilot.com"
+      }
+    },
+    "zai": {
+      "options": {
+        "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4"
       }
     }
   }

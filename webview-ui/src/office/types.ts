@@ -18,6 +18,8 @@ export interface Character {
   animTimer: number;
   toolStatus?: string;
   bubbleType?: 'permission' | 'waiting' | 'zzz';
+  bubbleText?: string;
+  bubbleTextTimer?: number;
   contextUsed?: number;
   contextMax?: number;
   isRateLimited?: boolean;

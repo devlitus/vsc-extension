@@ -255,7 +255,7 @@ export function InspectionPanel({
           </div>
           {inspectionData && (
             <div style={{ marginTop: 6, fontSize: 12, color: '#888', fontFamily: 'sans-serif' }}>
-              Turn duration: {inspectionData.currentTurnDuration}s
+              Turn duration: {(inspectionData.currentTurnDuration / 1000).toFixed(1)}s
             </div>
           )}
         </Section>

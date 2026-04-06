@@ -38,10 +38,12 @@ export function getState<T = unknown>(): T {
   return browserGetState<T>();
 }
 
-export function onMessage(handler: (message: unknown) => void): void {
+export function onMessage(handler: (message: unknown) => void): () => void {
   if (currentEnvironment === 'vscode') {
-    window.addEventListener('message', handler as EventListener);
+    const wrapped = (ev: MessageEvent) => handler(ev.data);
+    window.addEventListener('message', wrapped);
+    return () => window.removeEventListener('message', wrapped);
   } else {
-    browserOnMessage(handler);
+    return browserOnMessage(handler);
   }
 }

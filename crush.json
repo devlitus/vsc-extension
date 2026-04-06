@@ -1,0 +1,17 @@
+{
+  "providers": {
+    "minimax": {
+      "type": "anthropic",
+      "api_endpoint": "https://api.minimax.io/anthropic"
+    },
+    "copilot": {
+      "type": "openai-compat",
+      "api_endpoint": "https://api.githubcopilot.com"
+    },
+    "zai": {
+      "options": {
+        "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4"
+      }
+    }
+  }
+}

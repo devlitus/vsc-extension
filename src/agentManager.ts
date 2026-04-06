@@ -1,9 +1,20 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { AgentState, TurnSummary } from './types';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+async function validateCwd(input: string): Promise<string | null> {
+  if (!input || input.length === 0 || input.length > 1024) return null;
+  try {
+    const real = fs.realpathSync(path.resolve(input));
+    if (!fs.statSync(real).isDirectory()) return null;
+    return real;
+  } catch { return null; }
+}
 const MAX_TURN_HISTORY = 20;
 
 export class AgentManager {
@@ -48,6 +59,7 @@ export class AgentManager {
       turnHistory: [],
       currentTurnStartTime: undefined,
       isInterrupted: false,
+      currentTurnAssistantContent: '',
     };
 
     if (terminal) {
@@ -99,8 +111,13 @@ export class AgentManager {
     if (!agent) {
       return null;
     }
+    const cwd = await validateCwd(agent.projectDir);
+    if (!cwd) {
+      agent.branch = null;
+      return null;
+    }
     try {
-      const { stdout } = await execAsync(`git -C "${agent.projectDir}" rev-parse --abbrev-ref HEAD`);
+      const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD']);
       agent.branch = stdout.trim();
       return agent.branch;
     } catch {
@@ -147,7 +164,7 @@ export class AgentManager {
     if (!agent || !agent.terminalRef) {
       return false;
     }
-    agent.terminalRef.sendText('\x03');
+    agent.terminalRef.sendText('\x03', false);
     agent.isInterrupted = true;
     return true;
   }
@@ -172,11 +189,24 @@ export class AgentManager {
   }
 
   sendChatMessage(agentId: number, text: string): boolean {
+    const clean = sanitizeChatInput(text);
+    if (!clean) return false;
     const agent = this.agents.get(agentId);
     if (!agent || !agent.terminalRef) {
       return false;
     }
-    agent.terminalRef.sendText(text, true);
+    agent.terminalRef.sendText(clean, true);
     return true;
   }
+}
+
+function sanitizeChatInput(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const clean = input
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')                    // C0 controls
+    .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')          // Unicode format/override chars
+    .replace(/\r?\n/g, ' ')
+    .trim();
+  if (!clean || clean.length > 2000) return null;
+  return clean;
 }
