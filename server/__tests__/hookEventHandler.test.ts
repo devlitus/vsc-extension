@@ -3,6 +3,7 @@ import { handleHookEvent, validateHookEvent } from '../../src/server/hookEventHa
 import { AgentState } from '../../src/types';
 import { WebviewMessage } from '../../src/types';
 import { HookEvent } from '../../src/server/types';
+import { AgentManager } from '../../src/agentManager';
 
 // Mock vscode module
 vi.mock('vscode', () => ({}));
@@ -15,6 +16,7 @@ function createMockAgent(overrides: Partial<AgentState> = {}): AgentState {
     jsonlFile: '/test/project/.claude/projects/test-session-123.jsonl',
     fileOffset: 0,
     lineBuffer: '',
+    lineChunks: [],
     activeToolIds: new Set(),
     activeToolStatuses: new Map(),
     activeToolNames: new Map(),
@@ -28,6 +30,9 @@ function createMockAgent(overrides: Partial<AgentState> = {}): AgentState {
     lastDataAt: Date.now(),
     linesProcessed: 0,
     seenUnknownRecordTypes: new Set(),
+    toolsThisTurn: [],
+    turnHistory: [],
+    currentTurnAssistantContent: '',
     ...overrides,
   };
 }
@@ -75,15 +80,21 @@ describe('hookEventHandler', () => {
   });
 
   describe('handleHookEvent', () => {
-    let agents: AgentState[];
+    let agentManager: AgentManager;
     let postMessageMock: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
       postMessageMock = vi.fn();
-      agents = [createMockAgent({ id: 1, sessionId: 'test-session-123' })];
+      // Mock AgentManager with getAgentBySessionId method
+      agentManager = {
+        getAgentBySessionId: vi.fn(),
+      } as unknown as AgentManager;
     });
 
     it('PreToolUse with known sessionId → calls callback with permissionRequest', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(mockAgent);
+
       const event: HookEvent = {
         type: 'PreToolUse',
         sessionId: 'test-session-123',
@@ -91,23 +102,26 @@ describe('hookEventHandler', () => {
         toolInput: { filePath: '/test.txt' },
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).toHaveBeenCalledTimes(1);
       expect(postMessageMock).toHaveBeenCalledWith(1, {
         type: 'permissionRequest',
         agentId: 1,
       });
-      expect(agents[0].permissionSent).toBe(true);
+      expect(mockAgent.permissionSent).toBe(true);
     });
 
     it('Stop with known sessionId → calls callback with turnEnd and hookDelivered=true', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(mockAgent);
+
       const event: HookEvent = {
         type: 'Stop',
         sessionId: 'test-session-123',
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).toHaveBeenCalledTimes(1);
       expect(postMessageMock).toHaveBeenCalledWith(1, {
@@ -115,16 +129,19 @@ describe('hookEventHandler', () => {
         agentId: 1,
         source: 'hook',
       });
-      expect(agents[0].hookDelivered).toBe(true);
+      expect(mockAgent.hookDelivered).toBe(true);
     });
 
     it('SubagentStop with known sessionId → calls callback with turnEnd', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(mockAgent);
+
       const event: HookEvent = {
         type: 'SubagentStop',
         sessionId: 'test-session-123',
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).toHaveBeenCalledTimes(1);
       expect(postMessageMock).toHaveBeenCalledWith(1, {
@@ -132,10 +149,13 @@ describe('hookEventHandler', () => {
         agentId: 1,
         source: 'hook',
       });
-      expect(agents[0].hookDelivered).toBe(true);
+      expect(mockAgent.hookDelivered).toBe(true);
     });
 
     it('PostToolUse with known sessionId → calls callback with toolEnd', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(mockAgent);
+
       const event: HookEvent = {
         type: 'PostToolUse',
         sessionId: 'test-session-123',
@@ -143,7 +163,7 @@ describe('hookEventHandler', () => {
         toolResult: { content: 'file contents' },
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).toHaveBeenCalledTimes(1);
       expect(postMessageMock).toHaveBeenCalledWith(1, {
@@ -153,41 +173,44 @@ describe('hookEventHandler', () => {
     });
 
     it('Event with unknown sessionId → does not call callbacks', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
       const event: HookEvent = {
         type: 'PreToolUse',
         sessionId: 'unknown-session',
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).not.toHaveBeenCalled();
-      expect(agents[0].permissionSent).toBe(false);
+      expect(mockAgent.permissionSent).toBe(false);
     });
 
     it('Event with unknown sessionId does not modify agent state', () => {
+      const mockAgent = createMockAgent({ id: 1, sessionId: 'test-session-123' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
       const event: HookEvent = {
         type: 'Stop',
         sessionId: 'unknown-session',
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
-      expect(agents[0].hookDelivered).toBe(false);
+      expect(mockAgent.hookDelivered).toBe(false);
     });
 
     it('finds agent by sessionId among multiple agents', () => {
-      const agents = [
-        createMockAgent({ id: 1, sessionId: 'session-a' }),
-        createMockAgent({ id: 2, sessionId: 'session-b' }),
-        createMockAgent({ id: 3, sessionId: 'session-c' }),
-      ];
+      const mockAgent = createMockAgent({ id: 2, sessionId: 'session-b' });
+      (agentManager.getAgentBySessionId as ReturnType<typeof vi.fn>).mockReturnValue(mockAgent);
 
       const event: HookEvent = {
         type: 'PreToolUse',
         sessionId: 'session-b',
       };
 
-      handleHookEvent(event, agents, postMessageMock);
+      handleHookEvent(event, agentManager, postMessageMock);
 
       expect(postMessageMock).toHaveBeenCalledWith(2, {
         type: 'permissionRequest',
