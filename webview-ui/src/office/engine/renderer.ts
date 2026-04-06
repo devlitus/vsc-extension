@@ -217,9 +217,44 @@ function drawPlant(ctx: CanvasRenderingContext2D, gx: number, gy: number, alt = 
 }
 
 function drawBookshelf(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
-  drawKenneyTile(ctx, TILES.cabinetTop, gx, gy, SPRITE_TILE_SIZE);
-  drawKenneyTile(ctx, TILES.cabinetMid, gx, gy + 1, SPRITE_TILE_SIZE);
-  drawKenneyTile(ctx, TILES.cabinetBot, gx, gy + 2, SPRITE_TILE_SIZE);
+  const x = gx * SPRITE_TILE_SIZE;
+  const y = gy * SPRITE_TILE_SIZE;
+
+  // Top shelf (3 tiles tall total)
+  ctx.fillStyle = '#8B4513'; // Wood frame
+  ctx.fillRect(x, y, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+  ctx.fillStyle = '#A0522D'; // Wood top surface
+  ctx.fillRect(x, y + 2, SPRITE_TILE_SIZE, 2);
+  // Books on top shelf
+  const bookColors = ['#8B0000', '#00008B', '#006400', '#FF8C00', '#4B0082', '#B22222'];
+  for (let i = 0; i < 6; i++) {
+    ctx.fillStyle = bookColors[i];
+    ctx.fillRect(x + 1 + i * 2, y + 4, 2, 8);
+  }
+
+  // Middle shelf
+  const y2 = y + SPRITE_TILE_SIZE;
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(x, y2, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+  ctx.fillStyle = '#A0522D';
+  ctx.fillRect(x, y2 + 2, SPRITE_TILE_SIZE, 2);
+  // Books on middle shelf
+  for (let i = 0; i < 6; i++) {
+    ctx.fillStyle = bookColors[(i + 3) % 6];
+    ctx.fillRect(x + 1 + i * 2, y2 + 4, 2, 8);
+  }
+
+  // Bottom shelf
+  const y3 = y + SPRITE_TILE_SIZE * 2;
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(x, y3, SPRITE_TILE_SIZE, SPRITE_TILE_SIZE);
+  ctx.fillStyle = '#A0522D';
+  ctx.fillRect(x, y3 + 2, SPRITE_TILE_SIZE, 2);
+  // Books on bottom shelf
+  for (let i = 0; i < 6; i++) {
+    ctx.fillStyle = bookColors[(i + 5) % 6];
+    ctx.fillRect(x + 1 + i * 2, y3 + 4, 2, 8);
+  }
 }
 
 function drawDeskWithMonitor(ctx: CanvasRenderingContext2D, gx: number, gy: number): void {
@@ -374,13 +409,12 @@ function drawPainting(ctx: CanvasRenderingContext2D, gx: number, gy: number): vo
 
 function renderOfficeDecorations(ctx: CanvasRenderingContext2D, _width: number, _height: number): void {
   // ── MAIN OFFICE ─────────────────────────────────────────────
-  // Bookshelves against top wall
-  drawBookshelf(ctx, 2, 1);
-  drawBookshelf(ctx, 5, 1);
-  drawBookshelf(ctx, 10, 1);
-  drawBookshelf(ctx, 13, 1);
+  // Library on left wall (x=1)
+  drawBookshelf(ctx, 1, 2);  // spans y=2,3,4
+  drawBookshelf(ctx, 1, 7);  // spans y=7,8,9
+  drawBookshelf(ctx, 1, 12); // spans y=12,13,14
 
-  // Clock between bookshelves
+  // Clock on top wall
   drawClock(ctx, 8, 1);
 
   // Corner plants
