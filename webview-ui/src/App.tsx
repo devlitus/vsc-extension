@@ -6,6 +6,8 @@ import { startGameLoop, enqueueMessage } from './office/engine/gameLoop';
 import { createEditorState } from './office/editor/editorState';
 import type { EditorState } from './office/editor/editorState';
 import { EditorToolbar } from './office/editor/EditorToolbar';
+import { InspectionPanel } from './components/InspectionPanel';
+import type { InspectionPanelData, SubagentInfo } from './components/InspectionPanel';
 
 interface SettingsData {
   soundEnabled: boolean;
@@ -28,6 +30,9 @@ export default function App() {
     hooksEnabled: true,
   });
   const [versionUpgrade, setVersionUpgrade] = useState<{ oldVersion: string; newVersion: string } | null>(null);
+  const [inspectionPanelOpen, setInspectionPanelOpen] = useState(false);
+  const [inspectionAgentId, setInspectionAgentId] = useState<number | null>(null);
+  const [inspectionData, setInspectionData] = useState<InspectionPanelData | null>(null);
   
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -56,6 +61,22 @@ export default function App() {
         return;
       }
       
+      if (message.type === 'inspectionData' && typeof message.agentId === 'number') {
+        setInspectionData(message as unknown as InspectionPanelData);
+        setInspectionAgentId(message.agentId as number);
+        setInspectionPanelOpen(true);
+        return;
+      }
+      
+      if (message.type === 'agentDisconnected') {
+        if (inspectionAgentId === message.agentId) {
+          setInspectionPanelOpen(false);
+          setInspectionAgentId(null);
+          setInspectionData(null);
+        }
+        return;
+      }
+      
       // Pass all other messages to the game loop
       enqueueMessage(msg);
     };
@@ -71,7 +92,22 @@ export default function App() {
       const x = Math.floor((e.clientX - rect.left) / (16 * officeState.zoom));
       const y = Math.floor((e.clientY - rect.top) / (16 * officeState.zoom));
       
-      postMessage({ type: 'canvasClick', x, y });
+      // Check if clicked on a character
+      for (const char of officeState.characters.values()) {
+        if (char.position.x === x && char.position.y === y) {
+          // Open inspection panel for this agent
+          setInspectionAgentId(char.id);
+          setInspectionPanelOpen(true);
+          setInspectionData(null);
+          postMessage({ type: 'openInspectionPanel', agentId: char.id });
+          return; // Don't process seat selection
+        }
+      }
+      
+      // Seat selection logic only if editor mode or shift key
+      if (isEditorMode || e.shiftKey) {
+        postMessage({ type: 'canvasClick', x, y });
+      }
     };
     
     const handleWheel = (e: WheelEvent) => {
@@ -88,7 +124,44 @@ export default function App() {
       canvas.removeEventListener('click', handleClick);
       canvas.removeEventListener('wheel', handleWheel);
     };
-  }, [canvasRef, officeState, editorState]);
+  }, [canvasRef, officeState, editorState, inspectionAgentId]);
+  
+  const handleInterrupt = () => {
+    if (inspectionAgentId !== null) {
+      postMessage({ type: 'agentAction', agentId: inspectionAgentId, action: 'interrupt' });
+    }
+  };
+
+  const handleChat = (text: string) => {
+    if (inspectionAgentId !== null) {
+      postMessage({ type: 'agentChatMessage', agentId: inspectionAgentId, text });
+    }
+  };
+
+  const handleRedirect = () => {
+    if (inspectionAgentId !== null) {
+      postMessage({ type: 'agentAction', agentId: inspectionAgentId, action: 'redirect' });
+    }
+  };
+
+  const handleInspectionClose = () => {
+    setInspectionPanelOpen(false);
+    setInspectionAgentId(null);
+    setInspectionData(null);
+  };
+
+  // Compute subagents for the current inspection agent
+  const subagentsForInspection: SubagentInfo[] = inspectionAgentId !== null
+    ? Array.from(officeState.subagents.values())
+        .filter(sa => sa.agentId === inspectionAgentId)
+        .map(sa => ({
+          agentId: sa.agentId,
+          toolId: sa.toolId,
+          state: sa.state,
+        }))
+    : [];
+
+  const breadcrumb = inspectionAgentId !== null ? `Agent #${inspectionAgentId}` : '';
   
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
@@ -109,6 +182,20 @@ export default function App() {
           onRedo={() => {}}
         />
       )}
+      <InspectionPanel
+        isOpen={inspectionPanelOpen}
+        onClose={handleInspectionClose}
+        inspectionData={inspectionData}
+        onInterrupt={handleInterrupt}
+        onChat={handleChat}
+        onRedirect={handleRedirect}
+        subagents={subagentsForInspection}
+        onSubagentClick={(agentId) => {
+          setInspectionAgentId(agentId);
+          postMessage({ type: 'openInspectionPanel', agentId });
+        }}
+        breadcrumb={breadcrumb}
+      />
     </div>
   );
 }

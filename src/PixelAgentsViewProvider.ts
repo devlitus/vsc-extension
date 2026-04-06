@@ -104,6 +104,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private timerManager: TimerManager;
   private fileWatcher: FileWatcher;
   private server: PixelAgentsServer;
+  private openInspectionAgentId: number | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.agentManager = new AgentManager();
@@ -155,7 +156,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.sendInitialMessages();
   }
 
-  private handleWebviewMessage(message: unknown): void {
+  private async handleWebviewMessage(message: unknown): Promise<void> {
     if (!message || typeof message !== 'object') {
       return;
     }
@@ -194,6 +195,92 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       }
       case 'settingsLoaded': {
         this.sendSettingsToWebview();
+        break;
+      }
+      case 'openInspectionPanel': {
+        if (typeof msg.agentId === 'number') {
+          const agentId = msg.agentId;
+          this.openInspectionAgentId = agentId;
+          const agent = this.agentManager.getAgent(agentId);
+          if (agent) {
+            // Get branch async then send inspectionData
+            this.agentManager.getBranch(agentId).then((branch) => {
+              if (this.webviewView && this.openInspectionAgentId === agentId) {
+                const data = this.agentManager.getInspectionData(agentId);
+                if (data) {
+                  this.webviewView.webview.postMessage({
+                    type: 'inspectionData',
+                    ...data,
+                    branch,
+                  });
+                }
+              }
+            });
+          }
+        }
+        break;
+      }
+      case 'agentAction': {
+        const agentId = msg.agentId as number;
+        const action = msg.action as string;
+        if (action === 'interrupt') {
+          const success = this.agentManager.interruptAgent(agentId);
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({
+              type: 'agentAction',
+              agentId,
+              action: 'interrupt',
+              payload: { success },
+            });
+          }
+        } else if (action === 'redirect') {
+          const payload = msg.payload as { newCwd?: string } | undefined;
+          let newCwd = payload?.newCwd as string | undefined;
+          if (!newCwd) {
+            const selected = await vscode.window.showOpenDialog({
+              canSelectFolders: true,
+              canSelectMany: false,
+              openLabel: 'Select Working Directory',
+            });
+            if (!selected || selected.length === 0) {
+              break;
+            }
+            newCwd = selected[0].fsPath;
+          }
+
+          // Interrupt the current agent first
+          this.agentManager.interruptAgent(agentId);
+
+          // Open new terminal in newCwd
+          const terminal = vscode.window.createTerminal({
+            name: `Claude (Redirected)`,
+            cwd: newCwd,
+          });
+
+          // Start claude in the new terminal
+          terminal.sendText('claude', true);
+          terminal.show();
+
+          // Reassign the agent to the new terminal
+          this.agentManager.reassignTerminal(agentId, terminal, newCwd);
+
+          if (this.webviewView) {
+            this.webviewView.webview.postMessage({
+              type: 'agentAction',
+              agentId,
+              action: 'redirect',
+              payload: { success: true, newCwd },
+            });
+          }
+        }
+        break;
+      }
+      case 'agentChatMessage': {
+        const agentId = msg.agentId as number;
+        const text = msg.text as string;
+        if (typeof text === 'string') {
+          this.agentManager.sendChatMessage(agentId, text);
+        }
         break;
       }
     }
@@ -269,6 +356,35 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     const sanitized = sanitizeMessage(message);
     this.webviewView.webview.postMessage(sanitized);
+
+    // If inspection panel is open for this agent, send updated inspection data on relevant events
+    const relevantTypes = ['toolStart', 'toolEnd', 'turnEnd'] as const;
+    if (this.openInspectionAgentId !== null && relevantTypes.includes(message.type as any)) {
+      const msgAgentId = 'agentId' in message ? (message as { agentId: number }).agentId : null;
+      if (msgAgentId === this.openInspectionAgentId && this.webviewView) {
+        const data = this.agentManager.getInspectionData(this.openInspectionAgentId);
+        if (data) {
+          this.webviewView.webview.postMessage({
+            type: 'inspectionData',
+            ...data,
+            branch: this.agentManager.getAgent(this.openInspectionAgentId)?.branch ?? null,
+          });
+        }
+      }
+    }
+
+    if (message.type === 'agentRemoved') {
+      const removedId = (message as { agentId: number }).agentId;
+      if (removedId === this.openInspectionAgentId) {
+        this.openInspectionAgentId = null;
+        if (this.webviewView) {
+          this.webviewView.webview.postMessage({
+            type: 'agentDisconnected',
+            agentId: removedId,
+          });
+        }
+      }
+    }
   }
 
   private sendInitialMessages(): void {
