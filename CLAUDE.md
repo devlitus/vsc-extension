@@ -2,107 +2,73 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Role
-
-Eres el organizador del proyecto. Tu rol es:
-- **Nunca escribir código** — ni snippets, ni patches, ni ejemplos inline
-- **Sí puedes revisar código** — leer archivos, analizar problemas, señalar qué cambiar y por qué
-- **Solo produces documentación** — tareas, planes, decisiones, informes, checklists
-- **Organizas el trabajo** — desglosas tareas, priorizas, identificas dependencias, propones estructura de fases
-
-## Build Commands
+## Commands
 
 ```bash
-bun run build        # Build extension + webview (dist/extension.js + dist/webview/main.js)
-bun run build:ext    # Extension only (CJS for Node/VS Code runtime)
-bun run build:webview # Webview React bundle only
-bun run watch        # Watch mode for both targets
+# Build (both extension and webview)
+bun run build
+
+# Build individually
+bun run build:ext      # Extension host (Node CJS) → dist/extension.js
+bun run build:webview  # Webview (browser bundle) → dist/webview/main.js
+
+# Tests
+bun run test                                                      # Run all tests
+vitest run --config webview-ui/vitest.config.ts webview-ui/test  # Webview tests only
+vitest run --config server/vitest.config.ts server/__tests__      # Server tests only
+
+# Package
+vsce package   # Produces work-agents-*.vsix
 ```
 
-## Test Commands
-
-```bash
-bun run test          # Run all tests (webview + server)
-bun run test:server   # Unit tests in server/__tests__/ (vitest)
-bun run test:webview  # Component tests in webview-ui/test/ (vitest + happy-dom)
-bun run test:e2e      # End-to-end tests (Playwright)
-bun run package       # Package to .vsix for manual install testing
-```
-
-## Pre-Deployment Checklist
-
-Before deploying, verify in order:
-1. `bun run test` — all tests must pass
-2. `bun audit` — no known vulnerabilities
-3. `bun run package` — .vsix generates without errors
-4. Install .vsix in a clean VS Code instance and follow `docs/MANUAL_TESTING.md`
-
-Full checklist: `PRE_DEPLOYMENT_CHECKLIST.md`
-
-## Bun Usage
-
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun build` instead of `webpack` or `esbuild`
-- Use `bun install` instead of npm/yarn/pnpm
-- Bun is **build-only** — VS Code runtime uses Node.js builtins (`fs`, `http`, `crypto`, `path`, `os`)
-- No npm packages beyond `react`, `react-dom`, `@types/*` — intentional constraint
+To run a single test file: `vitest run --config server/vitest.config.ts server/__tests__/agentManager.test.ts`
 
 ## Architecture Overview
 
-**Pixel Agents** is a VS Code extension that visualizes Claude Code agents as characters in a 2D office game engine rendered in a webview.
+**Work Agents** is a VS Code extension that renders a live pixel-art office view of running Claude Code agents. There are three distinct runtimes:
 
-### Extension Side (`src/`)
+### 1. Extension host (`src/`)
+Runs in Node.js inside VS Code. Entry point: `src/extension.ts`.
 
-`PixelAgentsViewProvider` owns all managers and wires them together:
+- **`PixelAgentsViewProvider`** — Central orchestrator. Owns the webview, instantiates all services, routes messages between extension and webview.
+- **`FileWatcher`** — Polls `~/.claude/projects/**/*.jsonl` every 500ms. Discovers Claude terminals via `vscode.window.onDidOpenTerminal` (name `'claude'`). Reads new JSONL lines incrementally using byte offsets.
+- **`TranscriptParser`** (`processTranscriptLine`) — Parses Claude's JSONL transcript format (old v1 `type: 'tool'/'turn'/'system'` and new v2 `type: 'assistant'/'user'/'permission-mode'`) into typed `WebviewMessage` events.
+- **`AgentManager`** — In-memory store of `AgentState` objects, keyed by integer id. Positive ids = terminal-attached agents, negative = external/watch-all sessions.
+- **`PixelAgentsServer`** — Minimal HTTP server (`127.0.0.1:0`) that receives real-time hook POSTs from Claude Code. Config written to `~/.pixel-agents/server.json`. Auth via random 32-byte Bearer token.
+- **`claudeHookInstaller`** — Writes/removes `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop` hook entries in `~/.claude/settings.json`. Each hook runs an inline curl command.
 
-- **`FileWatcher`** — polls `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` every 500ms, reads new lines via byte offset
-- **`AgentManager`** — maintains `Map<id, AgentState>`; agent IDs: positive = terminal agent, negative = subagent
-- **`TranscriptParser`** — parses JSONL lines into `WebviewMessage` events
-- **`TimerManager`** — 5s permission timeout timers
-- **`PixelAgentsServer`** (`src/server/`) — HTTP server on `127.0.0.1:0` (random port), Bearer auth via 32-byte hex token; receives Claude Code hook POSTs at `/api/hooks/:providerId`
-- **`claudeHookInstaller`** — reads/writes `~/.claude/settings.json` to install/uninstall curl hooks on server start/stop
-
-### Webview Side (`webview-ui/src/`)
-
-React app running a canvas 2D game engine:
-
-- **`runtime.ts`** — detects VS Code vs browser environment; enables local development via `browserMock.ts`
-- **`office/engine/gameLoop.ts`** — `requestAnimationFrame` loop, processes message queue, calls `updateCharacters()` + `render()` each frame
-- **`office/engine/characters.ts`** — BFS pathfinding (`bfsPath`), path traversal at 2 tiles/sec, animation state machine
-- **`office/engine/renderer.ts`** — canvas 2D: floor tiles, furniture, characters, speech bubbles, matrix rain overlay
-- **`office/layout/tileMap.ts`** — 2D grid with bounds-safe get/set, resize, serialize
-- **`office/editor/`** — layout editor: tool state, paint/erase/place actions, undo/redo, toolbar React component
-
-### Message Flow
-
+**Data flow (file-poll path):**
 ```
-JSONL files / HTTP hooks → FileWatcher / PixelAgentsServer
-  → AgentManager → WebviewMessage → sanitizeMessage() → webview.postMessage()
-    → gameLoop message queue → updateCharacters() → renderer
+JSONL file → FileWatcher.readNewLines → processTranscriptLine → AgentUpdateCallback → PixelAgentsViewProvider.onAgentUpdate → webview.postMessage
 ```
 
-### Key State: `AgentState` (`src/types.ts`)
+**Data flow (hook path):**
+```
+Claude hook → curl POST → PixelAgentsServer → handleHookEvent → AgentUpdateCallback → webview.postMessage
+```
 
-- `hookDelivered` flag deduplicates `turnEnd` when hook arrives before polling. Reset on `turn.action === 'start'`
-- `isWaiting` / `permissionSent` track permission request state
-- `activeToolIds`, `activeToolStatuses`, `activeToolNames` track in-flight tools
+### 2. Webview (`webview-ui/src/`)
+Runs in the browser sandbox. Entry: `webview-ui/src/main.tsx` → `App.tsx`.
 
-## Important Paths
+React is used only for the UI chrome (toolbars, modals, kanban). The main visual is a **canvas game loop** (`office/engine/`).
 
-| Path | Purpose |
-|------|---------|
-| `~/.claude/projects/` | Claude Code session JSONL files |
-| `~/.claude/settings.json` | Claude Code hooks config (auto-modified) |
-| `~/.pixel-agents/server.json` | Hook server config (port, token, pid) |
-| `~/.pixel-agents/layout.json` | Persisted office layout |
+- **`gameLoop.ts`** — `requestAnimationFrame` loop. Calls `processMessageQueue` each frame to consume `WebviewMessage` events from the extension, then `updateCharacters`, then `render`.
+- **`officeState.ts`** — Plain-data state object: characters (agents), subagents, seats, layout, tileMap, zoom/pan.
+- **`renderer.ts`** — Canvas 2D rendering. Draws floor/wall tiles, furniture (now via Kenney sprites), characters (still canvas 2D pixel art), speech bubbles, subagent links.
+- **`characters.ts`** — BFS pathfinding, character movement and animation updates.
+- **`sprites/kenneySprites.ts`** — Kenney roguelike-indoors tileset. `initTileset(uri)` loads the PNG; `drawKenneyTile(ctx, TILES.x, gx, gy)` draws a 16×16 tile. Tileset URI flows: `assetLoader.ts` → `assetsLoaded` message → `App.tsx` intercepts and enqueues `tilesetReady` → `gameLoop.ts` calls `initTileset`.
+- **`sprites/spriteData.ts`** — Defines `SPRITE_TILE_SIZE = 16` (used everywhere) and animation frames.
 
-## VS Code Extension Constraints
+**Message routing in `App.tsx`:**
+Some messages are handled directly by React state setters (settings, inspection panel, kanban). Everything else is passed to `enqueueMessage()` for the game loop. The `assetsLoaded` message is intercepted to extract `tilesetUri` and enqueue `tilesetReady` instead.
 
-- Activation: `onStartupFinished`
-- `dispose()` must stop server, uninstall hooks, dispose timers
-- `webview.options.enableScripts: true` required; all messages through `sanitizeMessage()` to prevent XSS
-- Extension builds as CJS (`--format=cjs`), webview builds as ESM bundle; `vscode` module is external
+### 3. Server tests (`server/__tests__/`)
+Test files for extension-host code. Use vitest with a Node environment (no DOM).
 
-## Development Phases
+## Key constraints
 
-Phases tracked in `docs/phases/`: phase-1-skeleton → phase-2-agents → phase-3-hooks → phase-4-movement → phase-5-polish → phase-6-inspection → phase-7-kanban
+- **CSP**: Webview CSP allows `img-src ${webview.cspSource}`. Images must be loaded via `webview.asWebviewUri()` — never `file://` or absolute paths.
+- **No `media/` in `.vscodeignore`**: Static assets in `media/` are included in the VSIX package. The Kenney tileset lives at `media/kenney_tileset.png`.
+- **Security**: All strings going into the webview are sanitized through `sanitizeMessage`. Prototype pollution protection is applied in `transcriptParser.ts` (`deepCloneWithProtection`) and `assetLoader.ts`.
+- **Character rendering**: Characters (agents) are drawn with canvas 2D pixel art — do not replace with sprites as Kenney tiles have no human figures.
+- **Agent ID sign convention**: Positive IDs = terminal-attached agents; negative IDs = external "watch-all" sessions.
