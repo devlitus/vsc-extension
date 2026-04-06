@@ -306,7 +306,8 @@ describe('AgentManager', () => {
     });
 
     it('does nothing when sessionId is the same', () => {
-      agentManager.createAgent('session-123', '/test/project', '/test/project/.claude/session.jsonl');
+      const terminal = createMockTerminal();
+      agentManager.createAgent('session-123', '/test/project', '/test/project/.claude/session.jsonl', terminal);
       const before = agentManager.getAgentBySessionId('session-123');
       agentManager.updateSessionId(1, 'session-123');
       const after = agentManager.getAgentBySessionId('session-123');
@@ -314,20 +315,23 @@ describe('AgentManager', () => {
     });
 
     it('updates agent.sessionId field', () => {
-      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      const terminal = createMockTerminal();
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl', terminal);
       agentManager.updateSessionId(1, 'session-xyz');
       const agent = agentManager.getAgent(1);
       expect(agent?.sessionId).toBe('session-xyz');
     });
 
     it('removes old sessionId from agentsBySessionId lookup', () => {
-      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      const terminal = createMockTerminal();
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl', terminal);
       agentManager.updateSessionId(1, 'session-xyz');
       expect(agentManager.getAgentBySessionId('session-abc')).toBeUndefined();
     });
 
     it('adds new sessionId to agentsBySessionId lookup', () => {
-      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl');
+      const terminal = createMockTerminal();
+      agentManager.createAgent('session-abc', '/test/project', '/test/project/.claude/session.jsonl', terminal);
       agentManager.updateSessionId(1, 'session-xyz');
       const found = agentManager.getAgentBySessionId('session-xyz');
       expect(found).toBeDefined();
@@ -336,9 +340,11 @@ describe('AgentManager', () => {
 
     it('does not remove a different agent that shares the old sessionId key', () => {
       // Two agents where agent2 somehow holds the same session key as agent1's old sessionId
-      const agent1 = agentManager.createAgent('session-shared', '/project1', '/project1/s.jsonl');
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+      const agent1 = agentManager.createAgent('session-shared', '/project1', '/project1/s.jsonl', terminal1);
       // Manually force a second agent into the same session slot to simulate a collision scenario
-      const agent2 = agentManager.createAgent('session-other', '/project2', '/project2/s.jsonl');
+      const agent2 = agentManager.createAgent('session-other', '/project2', '/project2/s.jsonl', terminal2);
       // Simulate agentsBySessionId already pointing to agent2 for 'session-shared'
       // by first removing agent1's mapping and injecting agent2
       // (We test the guard: `agentsBySessionId.get(old) === agent` before deleting)
@@ -351,7 +357,8 @@ describe('AgentManager', () => {
     });
 
     it('allows getAgentBySessionId to find agent after update', () => {
-      agentManager.createAgent('', '/test/project', '/test/project/.claude/session.jsonl');
+      const terminal = createMockTerminal();
+      agentManager.createAgent('', '/test/project', '/test/project/.claude/session.jsonl', terminal);
       agentManager.updateSessionId(1, 'real-session-id');
       const found = agentManager.getAgentBySessionId('real-session-id');
       expect(found?.id).toBe(1);

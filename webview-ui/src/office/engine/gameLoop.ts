@@ -26,6 +26,7 @@ function breakSpotFor(agentId: number) {
 }
 
 const MIN_TOOL_DISPLAY_MS = 2000; // Minimum time to show tool animation before toolEnd
+const SLEEP_DELAY_MS = 30_000;    // Idle at desk this long → ZZZ bubble
 
 // Conference meeting spots: chairs around the conference table
 const CONFERENCE_SPOTS: Position[] = [
@@ -68,7 +69,7 @@ function getCharacterStateForTool(toolName: string): 'read' | 'type' {
 // Meeting management: trigger conference meeting when ≥ 2 agents are idle
 function checkAndTriggerMeeting(state: OfficeState): void {
   const idleAgents = [...state.characters.values()].filter(c =>
-    c.state === 'idle' && !c.isInMeeting && !c.returnHomeAt && c.targetPath.length === 0
+    c.bubbleType === 'zzz' && !c.isInMeeting && c.targetPath.length === 0
   );
 
   // Only trigger meeting if we have at least 2 idle agents
@@ -129,17 +130,15 @@ export function startGameLoop(canvasEl: HTMLCanvasElement, initialState?: Office
     const now = Date.now();
     if (state) {
       for (const [_id, character] of state.characters) {
-        // Dismiss speech bubbles after timer expires
+        // Dismiss bubbles after timer expires
         if (character.bubbleTextTimer && now > character.bubbleTextTimer) {
           character.bubbleText = undefined;
           character.bubbleTextTimer = undefined;
+          if (character.bubbleType === 'done') {
+            character.bubbleType = undefined;
+          }
         }
-        // Dismiss 'done' bubbles after timer expires
-        if (character.bubbleType === 'done' && character.bubbleTextTimer && now > character.bubbleTextTimer) {
-          character.bubbleType = undefined;
-          character.bubbleTextTimer = undefined;
-        }
-        // Apply deferred toolEnd when minimum display time has elapsed
+        // Apply deferred toolEnd when minimum display time has elapsed — stay at desk
         if (character.toolEndAt && now >= character.toolEndAt) {
           character.toolEndAt = undefined;
           character.bubbleType = 'done';
@@ -147,29 +146,12 @@ export function startGameLoop(canvasEl: HTMLCanvasElement, initialState?: Office
           character.bubbleText = undefined;
           character.pendingState = undefined;
           character.state = 'idle';
-          const breakSpot = breakSpotFor(character.id);
-          const otherChars = [...state.characters.values()].filter(c => c.id !== character.id);
-          const breakPath = bfsPath(state.tileMap, character.position, breakSpot, [], otherChars);
-          if (breakPath.length > 0) {
-            character.targetPath = breakPath;
-            character.state = 'walk';
-            character.targetFacingDir = 'down';
-          }
+          character.sleepAt = now + SLEEP_DELAY_MS;
         }
-        // Return home from break when timer expires
-        if (character.returnHomeAt && now > character.returnHomeAt && character.homePosition) {
-          character.returnHomeAt = undefined;
-          const otherChars = [...state.characters.values()].filter(c => c.id !== character.id);
-          const homePath = bfsPath(state.tileMap, character.position, character.homePosition, [], otherChars);
-          if (homePath.length > 0) {
-            character.targetPath = homePath;
-            character.state = 'walk';
-            character.targetFacingDir = 'up';
-          } else {
-            character.position = { ...character.homePosition };
-            character.state = 'idle';
-            character.facingDir = 'up';
-          }
+        // Inactivity at desk → ZZZ bubble
+        if (character.sleepAt && now >= character.sleepAt) {
+          character.sleepAt = undefined;
+          character.bubbleType = 'zzz';
         }
       }
     }
@@ -244,7 +226,7 @@ function processMessageQueue(state: OfficeState): void {
         // Dismiss any active conference meeting when turn ends
         dismissMeeting(state);
 
-        // Show done bubble, then walk back to idle (break) spot
+        // Stay at desk — show done bubble, then sleep after inactivity
         if (agentId !== undefined) {
           const char = state.characters.get(agentId);
           if (char) {
@@ -252,17 +234,8 @@ function processMessageQueue(state: OfficeState): void {
             char.bubbleTextTimer = Date.now() + SPEECH_BUBBLE_DURATION_MS;
             char.bubbleText = undefined;
             char.pendingState = undefined;
-            const breakSpot = breakSpotFor(agentId);
-            const otherChars = [...state.characters.values()].filter(c => c.id !== agentId);
-            const breakPath = bfsPath(state.tileMap, char.position, breakSpot, [], otherChars);
-            if (breakPath.length > 0) {
-              char.targetPath = breakPath;
-              char.state = 'walk';
-              char.targetFacingDir = 'down';
-              // No returnHomeAt — character stays at break spot until next tool
-            } else {
-              char.state = 'idle';
-            }
+            char.state = 'idle';
+            char.sleepAt = Date.now() + SLEEP_DELAY_MS;
           }
         } else {
           for (const char of state.characters.values()) {
@@ -270,17 +243,41 @@ function processMessageQueue(state: OfficeState): void {
             char.bubbleTextTimer = Date.now() + SPEECH_BUBBLE_DURATION_MS;
             char.bubbleText = undefined;
             char.state = 'idle';
+            char.sleepAt = Date.now() + SLEEP_DELAY_MS;
           }
         }
         break;
 
       case 'permissionRequest':
         // Set specific character to waiting state with permission bubble
+        // Walk to desk first, then wait there for permission
         if (agentId !== undefined) {
           const char = state.characters.get(agentId);
           if (char) {
             char.bubbleType = 'permission';
-            char.state = 'waiting';
+            char.returnHomeAt = undefined; // cancel any idle timer
+            if (char.homePosition) {
+              const atDesk =
+                char.position.x === char.homePosition.x &&
+                char.position.y === char.homePosition.y;
+              if (!atDesk) {
+                // Walk to desk first, then wait there
+                const otherChars = [...state.characters.values()].filter(c => c.id !== agentId);
+                const homePath = bfsPath(state.tileMap, char.position, char.homePosition, [], otherChars);
+                if (homePath.length > 0) {
+                  char.targetPath = homePath;
+                  char.state = 'walk';
+                  char.targetFacingDir = 'up';
+                  char.pendingState = 'waiting';
+                } else {
+                  char.state = 'waiting';
+                }
+              } else {
+                char.state = 'waiting';
+              }
+            } else {
+              char.state = 'waiting';
+            }
           }
         } else {
           // Fallback: set all characters if no agentId
@@ -311,8 +308,9 @@ function processMessageQueue(state: OfficeState): void {
             char.bubbleText = toolName;
             char.bubbleTextTimer = undefined;
             char.returnHomeAt = undefined; // cancel any idle timer
-            char.bubbleType = undefined;
-            char.toolEndAt = undefined; // cancel any pending toolEnd
+            char.bubbleType = undefined;   // clears ZZZ / done / permission
+            char.toolEndAt = undefined;    // cancel any pending toolEnd
+            char.sleepAt = undefined;      // cancel sleep timer — agent is working
             if (char.homePosition) {
               const atDesk =
                 char.position.x === char.homePosition.x &&

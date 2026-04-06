@@ -30,6 +30,7 @@ export interface Character {
   returnHomeAt?: number;        // timestamp: walk home after this (break timer)
   isInMeeting?: boolean;       // whether this character is currently in a conference meeting
   toolEndAt?: number;          // timestamp: apply toolEnd when reached (minimum display timer)
+  sleepAt?: number;            // timestamp: show ZZZ bubble after this (inactivity at desk)
 }
 
 export interface SubagentCharacter {
