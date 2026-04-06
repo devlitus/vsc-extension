@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { unstable_batchedUpdates } from 'react-dom';
 import { init, postMessage, onMessage } from './runtime';
 import { createOfficeState } from './office/engine/officeState';
 import type { OfficeState } from './office/engine/officeState';
@@ -55,26 +56,49 @@ export default function App() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
-  
+
+  // Sync officeState.zoom with React state
+  useEffect(() => {
+    officeState.zoom = zoom;
+  }, [zoom, officeState]);
+
+  // Refs for values that message handlers need but don't reactively depend on
+  const inspectionAgentIdRef = useRef(inspectionAgentId);
+  const kanbanBoardRef = useRef(kanbanBoard);
+  const autoAssignEnabledRef = useRef(autoAssignEnabled);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    inspectionAgentIdRef.current = inspectionAgentId;
+  }, [inspectionAgentId]);
+
+  useEffect(() => {
+    kanbanBoardRef.current = kanbanBoard;
+  }, [kanbanBoard]);
+
+  useEffect(() => {
+    autoAssignEnabledRef.current = autoAssignEnabled;
+  }, [autoAssignEnabled]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     const stop = startGameLoop(canvas, officeState);
-    
+
     const handleMessage = (msg: unknown) => {
       if (!msg || typeof msg !== 'object') {
         return;
       }
-      
+
       const message = msg as Record<string, unknown>;
-      
+
       // Handle settings and version messages directly
       if (message.type === 'settingsLoaded' && typeof message.settings === 'object') {
         setSettings(message.settings as SettingsData);
         return;
       }
-      
+
       if (message.type === 'versionUpgraded') {
         setVersionUpgrade({
           oldVersion: String(message.oldVersion ?? ''),
@@ -82,27 +106,28 @@ export default function App() {
         });
         return;
       }
-      
+
       if (message.type === 'inspectionData' && typeof message.agentId === 'number') {
         setInspectionData(message as unknown as InspectionPanelData);
         setInspectionAgentId(message.agentId as number);
         setInspectionPanelOpen(true);
         return;
       }
-      
+
       if (message.type === 'agentDisconnected') {
-        if (inspectionAgentId === message.agentId) {
+        // Use ref to get current value
+        if (inspectionAgentIdRef.current === message.agentId) {
           // Don't close panel; set inspectionData to null to show "Agent disconnected" banner
           setInspectionData(null);
         }
         return;
       }
-      
+
       if (message.type === 'kanbanLoaded' && typeof message.board === 'object' && isSafeKanbanBoard(message.board)) {
         setKanbanBoard(message.board as KanbanBoardType);
         return;
       }
-      
+
       if (message.type === 'kanbanUpdated' && typeof message.board === 'object') {
         setKanbanBoard(message.board as KanbanBoardType);
         return;
@@ -115,47 +140,55 @@ export default function App() {
       }
 
       if (message.type === 'agentIdle' && typeof message.agentId === 'number') {
-        // Find first unassigned task in backlog
-        if (kanbanBoard && autoAssignEnabled) {
-          const backlogTask = kanbanBoard.tasks.find(t => t.status === 'backlog' && !t.assignedAgentId);
+        // Find first unassigned task in backlog - use refs to get current values
+        const currentKanbanBoard = kanbanBoardRef.current;
+        const currentAutoAssignEnabled = autoAssignEnabledRef.current;
+        if (currentKanbanBoard && currentAutoAssignEnabled) {
+          const backlogTask = currentKanbanBoard.tasks.find(t => t.status === 'backlog' && !t.assignedAgentId);
           if (backlogTask) {
-            setAgentIdleNotification({ agentId: message.agentId as number, taskTitle: backlogTask.title });
+            unstable_batchedUpdates(() => {
+              setAgentIdleNotification({ agentId: message.agentId as number, taskTitle: backlogTask.title });
+            });
           }
         }
         return;
       }
-      
+
       if (message.type === 'taskMaybeComplete' && typeof message.agentId === 'number' && typeof message.taskId === 'string') {
-        if (kanbanBoard) {
-          const task = kanbanBoard.tasks.find(t => t.id === message.taskId);
+        // Use ref to get current value
+        const currentKanbanBoard = kanbanBoardRef.current;
+        if (currentKanbanBoard) {
+          const task = currentKanbanBoard.tasks.find(t => t.id === message.taskId);
           if (task) {
-            setTaskCompleteSuggestion({ agentId: message.agentId as number, taskId: message.taskId as string, taskTitle: task.title });
+            unstable_batchedUpdates(() => {
+              setTaskCompleteSuggestion({ agentId: message.agentId as number, taskId: message.taskId as string, taskTitle: task.title });
+            });
           }
         }
         return;
       }
-      
+
       if (message.type === 'githubSync' && typeof message.result === 'string') {
         setGithubSyncStatus({ result: message.result as 'success' | 'error', message: message.message as string | undefined });
         setTimeout(() => setGithubSyncStatus(null), 3000);
         return;
       }
-      
+
       // Pass all other messages to the game loop
       enqueueMessage(msg);
     };
-    
+
     const disposeMessage = onMessage(handleMessage);
-    
+
     // Request initial settings
     postMessage({ type: 'settingsLoaded' });
-    
+
     // Mouse events
     const handleClick = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const x = Math.floor((e.clientX - rect.left) / (16 * officeState.zoom));
-      const y = Math.floor((e.clientY - rect.top) / (16 * officeState.zoom));
-      
+      const x = Math.floor((e.clientX - rect.left) / (16 * zoom));
+      const y = Math.floor((e.clientY - rect.top) / (16 * zoom));
+
       // Check if clicked on a character
       for (const char of officeState.characters.values()) {
         if (char.position.x === x && char.position.y === y) {
@@ -179,22 +212,22 @@ export default function App() {
           return; // Don't process seat selection
         }
       }
-      
+
       // Seat selection logic only if editor mode or shift key
       if (isEditorMode || e.shiftKey) {
         postMessage({ type: 'canvasClick', x, y });
       }
     };
-    
+
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? -1 : 1;
-      officeState.zoom = Math.max(1, Math.min(4, officeState.zoom + delta));
+      setZoom(z => Math.max(1, Math.min(4, z + delta * 0.1)));
     };
-    
+
     canvas.addEventListener('click', handleClick);
     canvas.addEventListener('wheel', handleWheel, { passive: false });
-    
+
     return () => {
       stop();
       disposeMessage();
@@ -298,15 +331,16 @@ export default function App() {
   const handleAddAssetDir = () => postMessage({ type: 'addAssetDirectory' });
 
   // Compute subagents for the current inspection agent
-  const subagentsForInspection: SubagentInfo[] = inspectionAgentId !== null
-    ? Array.from(officeState.subagents.values())
-        .filter(sa => sa.linkedToParentId === inspectionAgentId)
-        .map(sa => ({
-          agentId: sa.agentId,
-          toolId: sa.toolId,
-          state: sa.state,
-        }))
-    : [];
+  const subagentsForInspection = useMemo(() => {
+    if (!inspectionAgentId) return [];
+    return Array.from(officeState.subagents.values()).filter(
+      s => s.linkedToParentId === inspectionAgentId
+    ).map(sa => ({
+      agentId: sa.agentId,
+      toolId: sa.toolId,
+      state: sa.state,
+    }));
+  }, [officeState.subagents, inspectionAgentId]);
 
   const breadcrumb = inspectionAgentId !== null ? `Agent #${inspectionAgentId}` : '';
   

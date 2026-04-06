@@ -10,13 +10,13 @@ import { AgentUpdateCallback, AgentState } from './types';
 const PROJECT_DIR = path.join(os.homedir(), '.claude', 'projects');
 const STALE_CHECK_INTERVAL_MS = 30000;
 
+// Security: Resolve symlinks using fs.realpathSync.native() to prevent path traversal attacks
 function isSafePath(filePath: string): boolean {
   try {
-    const resolved = path.resolve(filePath);
-    const realPath = fs.realpathSync(filePath);
-    // Also verify the real path stays within PROJECT_DIR
-    return resolved === realPath && 
-           realPath.startsWith(path.resolve(PROJECT_DIR) + path.sep);
+    const resolved = fs.realpathSync.native(filePath);
+    const realBaseDir = fs.realpathSync.native(PROJECT_DIR);
+    // Compare resolved path against resolved base directory with path separator to prevent partial matches
+    return resolved.startsWith(realBaseDir + path.sep);
   } catch {
     return false;
   }
@@ -29,16 +29,18 @@ export class FileWatcher {
   private _watchAllSessions = false;
   private knownExternalFiles = new Set<string>();
   private staleCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private realpathCache: Map<string, { path: string; mtime: number }> = new Map();
+  private readonly CACHE_TTL = 60000; // 1 minute
 
   constructor(
     private readonly agentManager: AgentManager,
     private readonly onAgentUpdate: AgentUpdateCallback
   ) {}
 
-  setWatchAllSessions(enabled: boolean): void {
+  async setWatchAllSessions(enabled: boolean): Promise<void> {
     this._watchAllSessions = enabled;
     if (enabled) {
-      this.startExternalSessionScanning();
+      await this.startExternalSessionScanning();
       this.startStaleExternalAgentCheck();
     } else {
       this.stopStaleExternalAgentCheck();
@@ -50,8 +52,9 @@ export class FileWatcher {
       return;
     }
 
-    this.pollingInterval = setInterval(() => {
-      this.poll();
+    // Performance: Use async polling to avoid blocking the event loop
+    this.pollingInterval = setInterval(async () => {
+      await this.poll();
     }, POLL_INTERVAL_MS);
 
     this._disposables.push(
@@ -83,15 +86,18 @@ export class FileWatcher {
       disposable.dispose();
     }
     this._disposables = [];
+    this.realpathCache.clear();
   }
 
-  private startExternalSessionScanning(): void {
-    if (!fs.existsSync(PROJECT_DIR)) {
+  private async startExternalSessionScanning(): Promise<void> {
+    try {
+      await fs.promises.access(PROJECT_DIR);
+    } catch {
       return;
     }
 
     try {
-      const entries = fs.readdirSync(PROJECT_DIR, { withFileTypes: true });
+      const entries = await fs.promises.readdir(PROJECT_DIR, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) {
           continue;
@@ -102,14 +108,36 @@ export class FileWatcher {
           continue;
         }
 
-        const sessionsFile = path.join(projectDir, 'sessions.jsonl');
-        if (fs.existsSync(sessionsFile)) {
-          this.knownExternalFiles.add(sessionsFile);
-          this.processProjectDir(projectDir, sessionsFile);
+        try {
+          const projectEntries = await fs.promises.readdir(projectDir, { withFileTypes: true });
+          for (const projectEntry of projectEntries) {
+            if (!projectEntry.isFile() || !projectEntry.name.endsWith('.jsonl')) {
+              continue;
+            }
+            const jsonlFile = path.join(projectDir, projectEntry.name);
+            if (!this.knownExternalFiles.has(jsonlFile)) {
+              this.knownExternalFiles.add(jsonlFile);
+              this.processProjectDir(projectDir, jsonlFile);
+            }
+          }
+        } catch (err) {
+          if (err instanceof Error) {
+            if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+              console.warn(`[Security] Permission denied while scanning: ${err.message}`);
+            } else {
+              console.error(`[Error] File watcher error: ${err.message}`);
+            }
+          }
         }
       }
-    } catch {
-      // Ignore scanning errors
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+          console.warn(`[Security] Permission denied while scanning: ${err.message}`);
+        } else {
+          console.error(`[Error] File watcher error: ${err.message}`);
+        }
+      }
     }
   }
 
@@ -118,8 +146,9 @@ export class FileWatcher {
       return;
     }
 
-    this.staleCheckInterval = setInterval(() => {
-      this.checkStaleExternalAgents();
+    // Performance: Use async check to avoid blocking the event loop
+    this.staleCheckInterval = setInterval(async () => {
+      await this.checkStaleExternalAgents();
     }, STALE_CHECK_INTERVAL_MS);
   }
 
@@ -130,27 +159,32 @@ export class FileWatcher {
     }
   }
 
-  private checkStaleExternalAgents(): void {
+  private async checkStaleExternalAgents(): Promise<void> {
     const agents = this.agentManager.getAllAgents();
     for (const agent of agents) {
       if (!agent.isExternal) {
         continue;
       }
 
-      if (!fs.existsSync(agent.jsonlFile)) {
+      try {
+        await fs.promises.access(agent.jsonlFile);
+      } catch {
+        // File doesn't exist, remove agent
         this.agentManager.removeAgent(agent.id);
         this.knownExternalFiles.delete(agent.jsonlFile);
       }
     }
   }
 
-  private poll(): void {
-    if (!fs.existsSync(PROJECT_DIR)) {
+  private async poll(): Promise<void> {
+    try {
+      await fs.promises.access(PROJECT_DIR);
+    } catch {
       return;
     }
 
     try {
-      const entries = fs.readdirSync(PROJECT_DIR, { withFileTypes: true });
+      const entries = await fs.promises.readdir(PROJECT_DIR, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) {
           continue;
@@ -161,13 +195,33 @@ export class FileWatcher {
           continue;
         }
 
-        const sessionsFile = path.join(projectDir, 'sessions.jsonl');
-        if (fs.existsSync(sessionsFile)) {
-          this.processProjectDir(projectDir, sessionsFile);
+        try {
+          const projectEntries = await fs.promises.readdir(projectDir, { withFileTypes: true });
+          for (const projectEntry of projectEntries) {
+            if (!projectEntry.isFile() || !projectEntry.name.endsWith('.jsonl')) {
+              continue;
+            }
+            const jsonlFile = path.join(projectDir, projectEntry.name);
+            this.processProjectDir(projectDir, jsonlFile);
+          }
+        } catch (err) {
+          if (err instanceof Error) {
+            if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+              console.warn(`[Security] Permission denied while scanning: ${err.message}`);
+            } else {
+              console.error(`[Error] File watcher error: ${err.message}`);
+            }
+          }
         }
       }
-    } catch {
-      // Ignore polling errors
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+          console.warn(`[Security] Permission denied while scanning: ${err.message}`);
+        } else {
+          console.error(`[Error] File watcher error: ${err.message}`);
+        }
+      }
     }
 
     this.externalScanTicks++;
@@ -188,7 +242,7 @@ export class FileWatcher {
     }
   }
 
-  private processProjectDir(projectDir: string, sessionsFile: string): void {
+  private async processProjectDir(projectDir: string, sessionsFile: string): Promise<void> {
     const agents = this.agentManager.getAllAgents();
     let agent = agents.find(a => a.projectDir === projectDir);
 
@@ -214,18 +268,20 @@ export class FileWatcher {
       return;
     }
 
-    if (!fs.existsSync(sessionsFile)) {
+    try {
+      await fs.promises.access(sessionsFile);
+    } catch {
       return;
     }
 
     this.readNewLines(agent);
   }
 
-  private readNewLines(agent: AgentState): void {
-    let fd: number | undefined;
+  private async readNewLines(agent: AgentState): Promise<void> {
+    let fileHandle: any | undefined;
     try {
-      fd = fs.openSync(agent.jsonlFile, 'r');
-      const stat = fs.fstatSync(fd);
+      fileHandle = await fs.promises.open(agent.jsonlFile, 'r');
+      const stat = await fileHandle.stat();
       const fileSize = stat.size;
 
       if (agent.fileOffset >= fileSize) {
@@ -234,34 +290,47 @@ export class FileWatcher {
 
       const bytesToRead = Math.min(READ_CHUNK_BYTES, fileSize - agent.fileOffset);
       const buffer = Buffer.alloc(bytesToRead);
-      const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, agent.fileOffset);
+      const { bytesRead } = await fileHandle.read(buffer, 0, bytesToRead, agent.fileOffset);
 
       if (bytesRead === 0) {
         return;
       }
 
       const text = buffer.toString('utf-8', 0, bytesRead);
-      agent.lineBuffer += text;
+      // Performance: Use array-based string accumulation to avoid memory churn
+      agent.lineChunks.push(text);
       agent.fileOffset += bytesRead;
 
-      const lines = agent.lineBuffer.split('\n');
+      // Join chunks and process lines
+      const lineBuffer = agent.lineChunks.join('');
+      const lines = lineBuffer.split('\n');
       agent.lineBuffer = lines.pop() || '';
 
       for (const line of lines) {
         processTranscriptLine(line, agent, this.onAgentUpdate);
       }
-    } catch {
-      // Ignore read errors
+
+      // Clear chunks after processing (lineBuffer holds the incomplete line)
+      agent.lineChunks = [];
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+          console.warn(`[Security] Permission denied while reading: ${err.message}`);
+        } else {
+          console.error(`[Error] File watcher read error: ${err.message}`);
+        }
+      }
     } finally {
-      if (fd !== undefined) {
-        try { fs.closeSync(fd); } catch { /* ignore */ }
+      if (fileHandle) {
+        try { await fileHandle.close(); } catch { /* ignore */ }
       }
     }
   }
 
   private onDidOpenTerminal(terminal: vscode.Terminal): void {
     if (terminal.name === 'claude') {
-      this.associateTerminal(terminal);
+      // Fire and forget - we don't want to block the event handler
+      this.associateTerminal(terminal).catch(() => {});
     }
   }
 
@@ -271,7 +340,7 @@ export class FileWatcher {
     }
   }
 
-  private associateTerminal(terminal: vscode.Terminal): void {
+  private async associateTerminal(terminal: vscode.Terminal): Promise<void> {
     const agents = this.agentManager.getAllAgents();
     const existingAgent = agents.find(a => a.terminalRef === terminal);
 
@@ -279,20 +348,47 @@ export class FileWatcher {
       return;
     }
 
-    const projectDirs = this.findProjectDirsForTerminal(terminal);
+    // Try to find the correct project directory for this terminal
+    const projectDir = await this.findProjectDirForTerminal(terminal);
 
-    for (const projectDir of projectDirs) {
-      const sessionsFile = path.join(projectDir, 'sessions.jsonl');
-      if (fs.existsSync(sessionsFile)) {
-        const agent = this.agentManager.createAgent(
-          '',
-          projectDir,
-          sessionsFile,
-          terminal
-        );
-        agent.fileOffset = 0;
-        agent.lineBuffer = '';
-        break;
+    if (projectDir) {
+      // Find the most recent *.jsonl file using mtime
+      try {
+        const jsonlEntries = await fs.promises.readdir(projectDir, { withFileTypes: true });
+        let mostRecentFile: string | null = null;
+        let mostRecentMtime = 0;
+
+        for (const entry of jsonlEntries) {
+          if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
+            continue;
+          }
+          const filePath = path.join(projectDir, entry.name);
+          const stat = await fs.promises.stat(filePath);
+          if (stat.mtimeMs > mostRecentMtime) {
+            mostRecentMtime = stat.mtimeMs;
+            mostRecentFile = filePath;
+          }
+        }
+
+        if (mostRecentFile) {
+          const agent = this.agentManager.createAgent(
+            '',
+            projectDir,
+            mostRecentFile,
+            terminal
+          );
+          agent.fileOffset = 0;
+          agent.lineBuffer = '';
+          agent.lineChunks = [];
+        }
+      } catch (err) {
+        if (err instanceof Error) {
+          if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+            console.warn(`[Security] Permission denied while accessing: ${err.message}`);
+          } else {
+            console.error(`[Error] File watcher error: ${err.message}`);
+          }
+        }
       }
     }
   }
@@ -307,24 +403,191 @@ export class FileWatcher {
     }
   }
 
-  private findProjectDirsForTerminal(_terminal: vscode.Terminal): string[] {
-    const dirs: string[] = [];
+  private async findProjectDirForTerminal(terminal: vscode.Terminal): Promise<string | null> {
+    try {
+      await fs.promises.access(PROJECT_DIR);
+    } catch {
+      return null;
+    }
 
-    if (!fs.existsSync(PROJECT_DIR)) {
-      return dirs;
+    // Try to get the terminal's working directory from shell integration
+    let terminalCwd: string | undefined;
+    if (terminal.shellIntegration && terminal.shellIntegration.cwd) {
+      terminalCwd = terminal.shellIntegration.cwd.fsPath;
+    }
+
+    // Collect all project directories with their sessionIds
+    type ProjectDirInfo = {
+      dir: string;
+      sessionId: string | null;
+    };
+
+    const projectDirs: ProjectDirInfo[] = [];
+
+    try {
+      const entries = await fs.promises.readdir(PROJECT_DIR, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+
+        const projectDir = path.join(PROJECT_DIR, entry.name);
+        if (!this.isSafeProjectDir(projectDir)) {
+          continue;
+        }
+
+        try {
+          const jsonlFiles = await fs.promises.readdir(projectDir, { withFileTypes: true });
+          let hasJsonlFile = false;
+          for (const jsonlEntry of jsonlFiles) {
+            if (jsonlEntry.isFile() && jsonlEntry.name.endsWith('.jsonl')) {
+              hasJsonlFile = true;
+              // Get the first jsonl file for extractSessionId
+              const jsonlFile = path.join(projectDir, jsonlEntry.name);
+              const sessionId = await this.extractSessionId(jsonlFile);
+              projectDirs.push({ dir: projectDir, sessionId });
+              break;
+            }
+          }
+          if (!hasJsonlFile) continue;
+        } catch {
+          // Skip directories without accessible *.jsonl files
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.message.includes('EACCES') || err.message.includes('EPERM')) {
+          console.warn(`[Security] Permission denied while scanning: ${err.message}`);
+        } else {
+          console.error(`[Error] File watcher error: ${err.message}`);
+        }
+      }
+    }
+
+    // Strategy 1: If we have a terminal CWD, try to match it to a project directory
+    // The project directory name is typically a hash of the directory path
+    if (terminalCwd) {
+      for (const info of projectDirs) {
+        // The project dir name is the hash, and the directory might contain a file
+        // that references the actual path. For now, try to match based on heuristic:
+        // check if any file in the project dir contains the terminal CWD
+        try {
+          const files = await fs.promises.readdir(info.dir);
+          for (const file of files) {
+            if (file.endsWith('.json')) {
+              const filePath = path.join(info.dir, file);
+              try {
+                const content = await fs.promises.readFile(filePath, 'utf-8');
+                if (content.includes(terminalCwd)) {
+                  return info.dir;
+                }
+              } catch {
+                // Skip files that can't be read
+              }
+            }
+          }
+        } catch {
+          // Skip directories that can't be read
+        }
+      }
+    }
+
+    // Strategy 2: If we have only one project directory, use it
+    if (projectDirs.length === 1) {
+      return projectDirs[0].dir;
+    }
+
+    // Strategy 3: If we have multiple directories and no terminal CWD, use the most recently modified one
+    if (projectDirs.length > 1) {
+      let mostRecentDir: ProjectDirInfo | null = null;
+      let mostRecentMtime = 0;
+
+      for (const info of projectDirs) {
+        try {
+          const jsonlEntries = await fs.promises.readdir(info.dir, { withFileTypes: true });
+          for (const entry of jsonlEntries) {
+            if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
+              continue;
+            }
+            const filePath = path.join(info.dir, entry.name);
+            const stat = await fs.promises.stat(filePath);
+            if (stat.mtimeMs > mostRecentMtime) {
+              mostRecentMtime = stat.mtimeMs;
+              mostRecentDir = info;
+            }
+          }
+        } catch {
+          // Skip directories that can't be read
+        }
+      }
+
+      if (mostRecentDir) {
+        return mostRecentDir.dir;
+      }
+    }
+
+    // Strategy 4: Fallback to the first available directory
+    if (projectDirs.length > 0) {
+      return projectDirs[0].dir;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract the sessionId from the first 'start' record in the sessions.jsonl file
+   */
+  private async extractSessionId(sessionsFile: string): Promise<string | null> {
+    try {
+      const fileHandle = await fs.promises.open(sessionsFile, 'r');
+      try {
+        // Read first chunk (should be enough to get the first line)
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await fileHandle.read(buffer, 0, 4096, 0);
+
+        if (bytesRead === 0) {
+          return null;
+        }
+
+        const text = buffer.toString('utf-8', 0, bytesRead);
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === 'start' && typeof parsed.sessionId === 'string') {
+              return parsed.sessionId;
+            }
+          } catch {
+            // Skip malformed JSON lines
+          }
+        }
+      } finally {
+        await fileHandle.close();
+      }
+    } catch {
+      // Return null if file can't be read
+    }
+
+    return null;
+  }
+
+  private async getRealPath(filePath: string): Promise<string> {
+    const cached = this.realpathCache.get(filePath);
+    const now = Date.now();
+
+    if (cached && (now - cached.mtime) < this.CACHE_TTL) {
+      return cached.path;
     }
 
     try {
-      const entries = fs.readdirSync(PROJECT_DIR, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          dirs.push(path.join(PROJECT_DIR, entry.name));
-        }
-      }
+      const realPath = await fs.promises.realpath(filePath);
+      this.realpathCache.set(filePath, { path: realPath, mtime: now });
+      return realPath;
     } catch {
-      // Ignore errors
+      return filePath;
     }
-
-    return dirs;
   }
 }
