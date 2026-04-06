@@ -62,6 +62,7 @@ export function KanbanBoard({
   const [assignmentMenu, setAssignmentMenu] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const assignmentMenuRef = useRef<HTMLDivElement>(null);
+  const MAX_UNDO_STACK = 5;
 
   // Close context menus on click outside
   useEffect(() => {
@@ -104,9 +105,16 @@ export function KanbanBoard({
 
   const saveToUndoStack = useCallback(() => {
     setUndoStack((prev) => {
-      const newStack = [...prev, { ...board, tasks: [...board.tasks] }];
-      // Keep only last 10 states
-      return newStack.slice(-10);
+      const newStack = [...prev, {
+        ...board,
+        tasks: board.tasks.map(t => ({ ...t })),
+        columns: board.columns.map(c => ({ ...c }))
+      }];
+      // Limit stack size to MAX_UNDO_STACK
+      if (newStack.length > MAX_UNDO_STACK) {
+        return newStack.slice(-MAX_UNDO_STACK);
+      }
+      return newStack;
     });
   }, [board]);
 
