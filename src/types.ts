@@ -16,6 +16,7 @@ export interface AgentState {
   jsonlFile: string;
   fileOffset: number;
   lineBuffer: string;
+  lineChunks: string[]; // Performance: Array-based string accumulation to avoid churn
   activeToolIds: Set<string>;
   activeToolStatuses: Map<string, string>;
   activeToolNames: Map<string, string>;
